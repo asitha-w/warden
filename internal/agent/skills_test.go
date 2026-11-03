@@ -23,7 +23,7 @@ func TestSkillsWriteRunbooksWorkflowsAndAgents(t *testing.T) {
 		}
 	}
 	out, err := o.orchestratorTool("save_runbook", map[string]any{"name": name, "selector": sel, "body": body}, "ann")
-	if err != nil || !strings.Contains(out, "applies to 1 cell") {
+	if err != nil || !strings.Contains(out, "applies to 2 cell") {
 		t.Fatalf("save_runbook: %q %v", out, err)
 	}
 	out, err = o.orchestratorTool("create_workflow", map[string]any{"name": "Logs on web-01", "cell": "web-01", "every_seconds": 10, "collect": "log-digest", "source": "*"}, "ann")
