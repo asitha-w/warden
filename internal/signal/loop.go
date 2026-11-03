@@ -1,13 +1,16 @@
-// Package signal is the deterministic signal loop: it ticks the world, pushes
-// metrics to the console, evaluates the responder rules, hands matches to the
-// orchestrator, and re-reads the signal after a fix to resolve findings. No
-// model is involved anywhere in this package.
+// Package signal is the deterministic loop: it ticks the world, pushes
+// metrics to the console, runs the tenant's monitoring workflows on their
+// schedules, hands hits to a responder or to Warden, and re-reads the signal
+// after a fix to resolve findings. No model is involved anywhere in this
+// package; a model runs only when a workflow fires and the trigger wakes
+// Warden.
 package signal
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/asitha-w/warden/internal/agent"
@@ -27,22 +30,28 @@ type Rule struct {
 	Text      func(w *world.World) string
 }
 
-// Loop runs the signal and verification loops.
+// Loop runs the tenant's workflows and the verification loop. The rules are
+// the checks metric workflows refer to by name; the workflows themselves live
+// in the tenant state, so the operator and Warden can add, pause and remove
+// them.
 type Loop struct {
-	st    *store.Store
-	w     *world.World
-	orch  *agent.Orchestrator
-	log   *slog.Logger
-	tick  time.Duration
-	rules []Rule
-	hold  map[string]int
-	clear map[string]int
-	tries map[string]int
+	st     *store.Store
+	w      *world.World
+	orch   *agent.Orchestrator
+	log    *slog.Logger
+	tick   time.Duration
+	rules  []Rule
+	hold   map[string]int
+	clear  map[string]int
+	tries  map[string]int
+	cursor map[string]map[string]int  // workflow/cell -> log path -> lines read
+	seen   map[string]map[string]bool // workflow/cell -> error signatures already fired on
+	last   map[string]time.Time
 }
 
 // New builds the loop with the default rules.
 func New(st *store.Store, w *world.World, orch *agent.Orchestrator, tick time.Duration, log *slog.Logger) *Loop {
-	return &Loop{st: st, w: w, orch: orch, log: log, tick: tick, rules: defaultRules(), hold: map[string]int{}, clear: map[string]int{}, tries: map[string]int{}}
+	return &Loop{st: st, w: w, orch: orch, log: log, tick: tick, rules: defaultRules(), hold: map[string]int{}, clear: map[string]int{}, tries: map[string]int{}, cursor: map[string]map[string]int{}, seen: map[string]map[string]bool{}, last: map[string]time.Time{}}
 }
 
 func above(host, metric string, limit float64) func(*world.World) bool {
@@ -108,28 +117,7 @@ func (l *Loop) step() {
 	if !online {
 		return
 	}
-	// signal: open findings, only for onboarded cells
-	cells := map[string]bool{}
-	l.st.View(func(s *domain.State) {
-		for _, c := range s.Cells {
-			cells[c.ID] = true
-		}
-	})
-	for _, r := range l.rules {
-		key := r.Responder + "/" + r.Resource
-		if !cells[r.Resource] {
-			l.hold[key] = 0
-			continue
-		}
-		if r.Check(l.w) {
-			l.hold[key]++
-		} else {
-			l.hold[key] = 0
-		}
-		if l.hold[key] == r.Hold {
-			l.orch.HandleSignal(agent.Signal{ResponderID: r.Responder, Resource: r.Resource, Title: r.Title, Severity: r.Severity, Text: "Signal loop: " + r.Text(l.w)})
-		}
-	}
+	l.runWorkflows()
 	// verification: re-read the signal for findings whose fix ran
 	var verifying []domain.Finding
 	l.st.View(func(s *domain.State) {
@@ -161,6 +149,131 @@ func (l *Loop) step() {
 			l.hold[rule.Responder+"/"+rule.Resource] = 0
 		}
 	}
+}
+
+// runWorkflows runs every enabled workflow that is due. A metric workflow
+// evaluates its named rule on the rule's resource when that cell is onboarded.
+// A log workflow digests what is new in the logs of every matching cell and
+// fires on an error signature it has not fired on before.
+func (l *Loop) runWorkflows() {
+	now := time.Now()
+	var wfs []domain.Workflow
+	var cells []domain.Cell
+	l.st.View(func(s *domain.State) {
+		for _, w := range s.Workflows {
+			if w.Enabled {
+				wfs = append(wfs, *w)
+			}
+		}
+		for _, c := range s.Cells {
+			cells = append(cells, *c)
+		}
+	})
+	onboarded := map[string]bool{}
+	for _, c := range cells {
+		onboarded[c.ID] = true
+	}
+	for _, wf := range wfs {
+		if t, ok := l.last[wf.ID]; ok && now.Sub(t) < time.Duration(wf.Every)*time.Second {
+			continue
+		}
+		l.last[wf.ID] = now
+		result := ""
+		fired := false
+		switch wf.Collect {
+		case "metric", "provider-state":
+			r := l.ruleByID(wf.Rule)
+			if r == nil {
+				result = "no rule " + wf.Rule
+				break
+			}
+			key := wf.ID
+			if !onboarded[r.Resource] {
+				l.hold[key] = 0
+				result = r.Resource + " is not a cell"
+				break
+			}
+			if r.Check(l.w) {
+				l.hold[key]++
+			} else {
+				l.hold[key] = 0
+			}
+			result = fmt.Sprintf("read %s on %s: condition %s (%d of %d)", wf.Source, r.Resource, map[bool]string{true: "holds", false: "clear"}[l.hold[key] > 0], l.hold[key], wf.Hold)
+			if l.hold[key] == wf.Hold {
+				fired = true
+				l.fire(wf, r.Resource, r.Title, r.Severity, r.Text(l.w))
+			}
+		case "log-digest":
+			n := 0
+			for _, c := range cells {
+				if !wf.Matches(&c) {
+					continue
+				}
+				n++
+				key := wf.ID + "/" + c.ID
+				d, err := l.w.LogDigest(c.ID, wf.Source, l.cursor[key])
+				if err != nil {
+					result = err.Error()
+					continue
+				}
+				l.cursor[key] = d.Cursor
+				if l.seen[key] == nil {
+					l.seen[key] = map[string]bool{}
+				}
+				var fresh []string
+				for _, sig := range d.Signatures {
+					if !l.seen[key][sig] {
+						fresh = append(fresh, sig)
+						l.seen[key][sig] = true
+					}
+				}
+				result = fmt.Sprintf("%s: %d new lines, %d errors", c.ID, d.NewLines, d.Errors)
+				if len(fresh) > 0 {
+					fired = true
+					where := wf.Source
+					if where == "*" {
+						where = "the logs"
+					}
+					text := fmt.Sprintf("%d new lines in %s on %s, %d of them errors. New signatures: %s.", d.NewLines, where, c.ID, d.Errors, strings.Join(fresh, " · "))
+					l.fire(wf, c.ID, fmt.Sprintf("New errors in %s on %s", where, c.ID), "warning", text)
+				}
+			}
+			if n == 0 {
+				result = "no cell matches the selector"
+			}
+		}
+		l.st.Update(func(s *domain.State) []store.Event {
+			w := s.Workflow(wf.ID)
+			if w == nil {
+				return nil
+			}
+			t := now
+			w.LastRun = &t
+			w.LastResult = result
+			if fired {
+				w.Fired++
+			}
+			return []store.Event{{Type: "workflow", Data: w}}
+		})
+	}
+}
+
+// fire hands a workflow hit to the responder it names, or to Warden.
+func (l *Loop) fire(wf domain.Workflow, resource, title, severity, text string) {
+	if strings.HasPrefix(wf.Trigger, "responder:") {
+		l.orch.HandleSignal(agent.Signal{ResponderID: strings.TrimPrefix(wf.Trigger, "responder:"), Resource: resource, Title: title, Severity: severity, Text: "Workflow " + wf.ID + ": " + text})
+		return
+	}
+	l.orch.HandleWorkflow(wf, resource, title, text)
+}
+
+func (l *Loop) ruleByID(id string) *Rule {
+	for i := range l.rules {
+		if l.rules[i].Responder+"/"+l.rules[i].Resource == id {
+			return &l.rules[i]
+		}
+	}
+	return nil
 }
 
 func (l *Loop) ruleFor(responder, resource string) *Rule {

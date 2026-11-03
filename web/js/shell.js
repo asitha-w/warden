@@ -73,6 +73,6 @@ export function demobar() {
   const ready = s.user && s.tenant && s.probe.status === 'online';
   bar.appendChild(el('span', { class: 'label', text: 'Demo controls' }));
   bar.appendChild(el('span', { text: ready ? 'Inject a fault into the simulated estate:' : 'Finish sign-in, tenant and connections to enable scenarios.' }));
-  bar.appendChild(el('span', { class: 'scen' }, s.scenarios.map((sc) => Button({ variant: sc.status === 'idle' ? 'primary' : 'quiet', label: sc.status === 'running' ? sc.name + ' (running)' : sc.status === 'done' ? sc.name + ' (done)' : sc.name, title: sc.description, disabled: !ready || sc.status !== 'idle', onClick: () => api.startScenario(sc.id).then(() => go('findings')).catch((e) => toast(e.message)) }))));
+  bar.appendChild(el('span', { class: 'scen' }, s.scenarios.map((sc) => Button({ variant: sc.status === 'idle' ? 'primary' : 'quiet', label: sc.status === 'running' ? sc.name + ' (running)' : sc.status === 'done' ? sc.name + ' (done)' : sc.name, title: sc.description, disabled: !ready || sc.status !== 'idle', onClick: () => api.startScenario(sc.id).then(() => { if (route().split('/')[0] !== 'warden') go('findings'); }).catch((e) => toast(e.message)) }))));
   bar.appendChild(Button({ label: 'Reset tenant', onClick: () => api.reset().then(() => { location.hash = '#login'; }) }));
 }

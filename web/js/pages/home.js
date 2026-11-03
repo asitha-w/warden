@@ -14,6 +14,7 @@ import { markdown } from '../markdown.js';
 import { icon } from '../icons.js';
 
 let formOpen = null; // 'azure' | 'upcloud' | null, survives re-renders
+export function openForm(name) { formOpen = name; rerender(); }
 
 function say(q) { api.chat(q).catch((e) => toast(e.message)); }
 
@@ -75,7 +76,7 @@ function connectionsBand(o) {
     Button({ variant: formOpen ? 'quiet' : 'primary', label: 'Add UpCloud token', onClick: () => { formOpen = formOpen === 'upcloud' ? null : 'upcloud'; rerender(); } }),
   ]);
   const close = () => { formOpen = null; rerender(); };
-  const form = formOpen === 'azure' ? el('div', { class: 'band-form' }, [azureForm({ onCancel: close, onSubmit: close })]) : formOpen === 'upcloud' ? el('div', { class: 'band-form' }, [upcloudForm({ onCancel: close, onSubmit: close })]) : null;
+  const form = formOpen === 'azure' ? el('div', { class: 'band-form' }, [azureForm({ onCancel: close, onSubmit: close })]) : formOpen === 'upcloud' ? el('div', { class: 'band-form' }, [upcloudForm({ onCancel: close, onSubmit: close, simple: true })]) : null;
   const hot = o.stage === 'connection' || o.stage === 'onboard';
   return band('Connections', hot, [...rows, adders, form, el('p', { class: 'sm muted', text: 'The credential goes in this form and nowhere else. Warden never sees it in the chat.' })],
     !s.connections.length ? 'A credential is an identity at a scope on a provider. Warden discovers what it covers; nothing is managed until Warden onboards it.' : null);
@@ -102,15 +103,51 @@ function cellsBand(o) {
   return band('Cells', o.stage === 'reach', rows, null);
 }
 
+function approvalsBand() {
+  const pending = sel.pendingApprovals();
+  if (!pending.length) return null;
+  return band('Needs you', true, pending.map((ap) => el('div', { class: 'band-approval' }, [
+    el('div', { class: 'sm' }, [el('b', { text: ap.task }), ap.command ? el('div', { class: 'mono sm muted', text: ap.command }) : null, el('div', { class: 'sm muted', text: ap.blastRadius || '' })]),
+    el('div', { class: 'bc-row' }, [Button({ variant: 'primary', label: ap.runId ? 'Approve fix' : 'Approve', onClick: () => api.decide(ap.id, 'approve').catch((e) => toast(e.message)) }), Button({ label: 'Deny', onClick: () => api.decide(ap.id, 'deny').catch((e) => toast(e.message)) }), ap.runId ? el('a', { href: '#inv/' + ap.runId, class: 'doclink sm', text: 'Open the run' }) : null]),
+  ])), null);
+}
+
+function runbooksBand() {
+  const s = store.state;
+  const rows = s.runbooks.map((rb) => el('div', { class: 'band-row' }, [el('div', { class: 'band-main' }, [el('div', { class: 'bc-row' }, [el('a', { href: '#runbooks', text: rb.name }), el('span', { class: 'sm muted', text: Object.keys(rb.selector || {}).map((k) => k + '=' + rb.selector[k]).join(', ') })]), el('div', { class: 'sm muted', text: `applies to ${sel.cellsMatching(rb.selector).length} cell(s) · by ${rb.updatedBy || 'default'}` })])]));
+  return band('Runbooks', false, rows, 'What an app is and how to handle it. Say "add a runbook for edge-01" and Warden writes one from your words.');
+}
+
+function workflowsBand() {
+  const s = store.state;
+  const rows = (s.workflows || []).map((wf) => el('div', { class: 'band-row' + (wf.fired ? ' hot' : '') }, [
+    el('div', { class: 'band-main' }, [
+      el('div', { class: 'bc-row' }, [el('b', { text: wf.name }), el('span', { class: 'bc-pill ' + (wf.enabled ? 'bc-pill-available' : 'bc-pill-none'), text: wf.enabled ? 'every ' + wf.every + 's' : 'paused' }), wf.fired ? el('span', { class: 'bc-pill bc-pill-missing', text: 'fired ' + wf.fired }) : null]),
+      el('div', { class: 'sm muted', text: `${wf.collect} of ${wf.source} on ${Object.keys(wf.selector || {}).map((k) => k + '=' + wf.selector[k]).join(', ')} · ${wf.condition} · ${wf.trigger === 'wake-warden' ? 'wakes Warden' : 'starts ' + wf.trigger.replace('responder:', '')}` }),
+      wf.lastResult ? el('div', { class: 'sm muted mono', text: 'last: ' + wf.lastResult }) : null,
+    ]),
+    el('div', { class: 'bc-row' }, [Button({ label: wf.enabled ? 'Pause' : 'Resume', onClick: () => api.workflow(wf.id, { enabled: !wf.enabled }).catch((e) => toast(e.message)) }), wf.createdBy !== 'default' ? Button({ label: 'Remove', onClick: () => api.deleteWorkflow(wf.id).catch((e) => toast(e.message)) }) : null]),
+  ]));
+  return band('Workflows', false, rows, 'Monitoring loops that run in the runtime and cost no tokens. A model runs only when one fires. Say "watch the logs on edge-01 every 10 seconds and wake me on errors".');
+}
+
+function agentsBand() {
+  const s = store.state;
+  const rows = s.agents.filter((a) => a.enabled).map((a) => el('div', { class: 'band-row' }, [el('div', { class: 'band-main' }, [el('div', { class: 'bc-row' }, [el('a', { href: '#agents', text: a.name }), el('span', { class: 'sm muted', text: a.kind === 'deterministic' ? 'no model' : a.kind })]), el('div', { class: 'sm muted', text: a.role + (a.scope && Object.keys(a.scope).length ? ' · scope ' + Object.keys(a.scope).map((k) => k + '=' + a.scope[k]).join(', ') : '') })])]));
+  return band('Agents', false, rows, 'Warden starts these; it adds specialists from templates only. Say "add an nginx specialist for the edge servers".');
+}
+
 function rerender() { dispatchEvent(new HashChangeEvent('hashchange')); }
 
 export function pageHome() {
   const o = store.setup || { stage: 'tenant', next: [], connections: [], cells: [] };
   const first = o.next && o.next[0];
   const panel = el('aside', { class: 'setup-panel', 'aria-label': 'Setup' }, [
-    el('div', { class: 'panel-head' }, [icon('warden'), el('span', { class: 'heading', text: o.stage === 'ready' ? 'Everything is set up' : 'Setup' }), el('span', { class: 'spacer' }), el('span', { class: 'badge', text: 'stage · ' + o.stage })]),
+    el('div', { class: 'panel-head' }, [icon('warden'), el('span', { class: 'heading', text: o.stage === 'ready' ? 'Your estate' : 'Setup' }), el('span', { class: 'spacer' }), el('span', { class: 'badge', text: 'stage · ' + o.stage })]),
     first ? el('div', { class: 'panel-next' }, [el('span', { class: 'label', text: 'Next' }), el('div', { text: first.title }), el('div', { class: 'sm muted', text: first.who === 'operator' ? 'Yours to do.' : first.who === 'both' ? 'Warden prepares it, you run it.' : first.tool ? 'Warden does this; ask it or click the button.' : 'In progress.' })]) : null,
+    approvalsBand(),
     tenantBand(o), connectionsBand(o), cellsBand(o),
+    ...(store.state.cells.length ? [runbooksBand(), workflowsBand(), agentsBand()] : []),
   ]);
   return el('div', { class: 'home' }, [thread(), panel]);
 }

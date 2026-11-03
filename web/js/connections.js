@@ -130,12 +130,16 @@ export function upcloudForm(opts = {}) {
   const submit = () => api.createConnection({ provider: 'upcloud', name: name.value, subAccount: sub.value.trim(), token: tok.value, tokenDays: parseInt(days.value, 10) || 365, permissions: perms.map((p) => ({ targetType: p.targetType, targetIdentifier: p.targetIdentifier || '*' })) })
     .then(() => opts.onSubmit && opts.onSubmit()).catch((e) => toast(e.message));
   renderPerms(); refresh();
-  return el('div', { class: 'form', style: 'max-width:none' }, [
-    el('div', { class: 'split' }, [field('uc-sub', 'Sub-account', sub), field('uc-days', 'Token validity, days', days, 'UpCloud API tokens live at most a year.')]),
-    field('uc-token', 'API token', tok, 'Stored in the tenant secret store, pinned to the egress address ' + egress() + '.'),
+  const more = [
+    field('uc-days', 'Token validity, days', days, 'UpCloud API tokens live at most a year.'),
     el('div', { class: 'field' }, [el('label', { text: 'Permissions granted by the main account' }), permBox, el('span', { class: 'sm muted', text: 'Per resource, no read and write split. server and managed_kubernetes with * cover everything Warden can manage.' })]),
     stepsBox,
     field('uc-name', 'Connection name', name),
+  ];
+  return el('div', { class: 'form', style: 'max-width:none' }, [
+    field('uc-sub', 'Sub-account', sub),
+    field('uc-token', 'API token', tok, 'Stored in the tenant secret store, pinned to the egress address ' + egress() + '.'),
+    opts.simple ? el('details', { class: 'details' }, [el('summary', { text: 'Validity, permissions and the manual steps' }), el('div', { class: 'form', style: 'max-width:none;margin-top:12px' }, more)]) : el('div', { class: 'form', style: 'max-width:none' }, more),
     el('div', { class: 'bc-row' }, [Button({ variant: 'primary', label: 'Test and save connection', onClick: submit }), opts.onCancel ? Button({ label: 'Cancel', onClick: opts.onCancel }) : null, el('a', { class: 'doclink sm', href: '#docs/upcloud/the-connection', text: 'Read the UpCloud page' })]),
   ]);
 }

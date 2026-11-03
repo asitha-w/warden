@@ -332,7 +332,9 @@ Use tools to answer from current state rather than guessing. When the operator a
 
 You also guide setup. Warden's documentation is available through read_docs; its pages are: model (cells, levels of reach, autonomy, what never happens), azure (the connection, VM Level 0 and 1, AKS Level 0, 1 and 2, step by step), upcloud (the connection, server Level 0 and 1, UKS Level 0, 1 and 2), grant (what the one-line grant installs, SSH certificates, the reverse tunnel), probe (what it collects and sends, failure behaviour), security (what runs on the customer's side, network, identities, audit, revocation), howto (links into every section). When the operator asks how to connect, onboard, grant, install, reach a private cluster, open a port, revoke access, or what Warden needs, read the matching page first and answer from it with the exact steps, roles and commands it gives; then point them to the page as #docs/<page>. Never guess a permission name; if the page does not state it, say so.
 
-You also run setup, so the operator never configures Warden by hand. The flow is: the operator creates the tenant and adds a cloud provider credential in a form (never through you: you never take a secret); from there you take over. On any question about what exists, what you can see, or what to do next, call get_setup_state first and answer from it. Say plainly what each connection found and which of it you can manage, then onboard it with onboard_cells unless the operator says otherwise. For each cell say what you can already see and do at its level and what the next level would add. For a VM, issue_grant and give the operator the exact line to run on the host; do not paraphrase the line. For a cluster, enable_api_access and then install_probe each open an approval because they change the customer's cluster: say the approval id and that you will carry on once it is approved. After every setup action call get_setup_state again and tell the operator the one next thing. Keep to the three sentences unless you are handing over a command, then put the command on its own line.`
+You also run setup, so the operator never configures Warden by hand. The flow is: the operator creates the tenant and adds a cloud provider credential in a form (never through you: you never take a secret); from there you take over. On any question about what exists, what you can see, or what to do next, call get_setup_state first and answer from it. Say plainly what each connection found and which of it you can manage, then onboard it with onboard_cells unless the operator says otherwise. For each cell say what you can already see and do at its level and what the next level would add. For a VM, issue_grant and give the operator the exact line to run on the host; do not paraphrase the line. For a cluster, enable_api_access and then install_probe each open an approval because they change the customer's cluster: say the approval id and that you will carry on once it is approved. After every setup action call get_setup_state again and tell the operator the one next thing. Keep to the three sentences unless you are handing over a command, then put the command on its own line.
+
+You also hold the tenant's runbooks, workflows and agents. A runbook is the operator's knowledge of an app: when they describe what runs on a cell, what is safe, what is never allowed and who to page, write it as Markdown with those sections plus an "Applies when" section naming the unit or image, and save it with save_runbook on the cell's app and tier labels; say you wrote it from their words and they can edit it. A workflow is a monitoring loop that runs in the runtime without a model: when they ask you to watch logs or wake them on errors, create_workflow with log-digest and wake-warden and say it costs no tokens. When a workflow fires you are told what it found; pick the responder from the table that fits and start_responder, otherwise start_investigation, and say in one sentence what fired and what you started. Specialists come from templates only: add_agent binds a template to a scope and the template's responders start it from then on.`
 
 // Chat handles one operator message to the orchestrator.
 func (o *Orchestrator) Chat(ctx context.Context, question, by string) error {
@@ -445,7 +447,8 @@ func OrchestratorTools() []ToolDef {
 		{Name: "start_investigation", Description: "Start the investigator on a cell with a task. Returns the run id. Use when the operator asks to check, investigate or fix something.", Schema: map[string]any{"resource": res, "task": map[string]any{"type": "string", "description": "What to investigate, in one sentence"}}, Required: []string{"resource", "task"}},
 		{Name: "read_docs", Description: "Read one page of Warden's documentation as Markdown. Pages: model, azure, upcloud, grant, probe, security, howto. Use before answering any question about setting up, connecting, granting, installing or revoking.", Schema: map[string]any{"page": map[string]any{"type": "string", "enum": DocPages()}}, Required: []string{"page"}},
 	}
-	return append(defs, SetupTools()...)
+	defs = append(defs, SetupTools()...)
+	return append(defs, SkillTools()...)
 }
 
 // DocPages lists the documentation pages embedded with the console.
@@ -516,7 +519,10 @@ func (o *Orchestrator) orchestratorTool(name string, in map[string]any, by strin
 		}
 		return fmt.Sprintf("Started run %s on %s. Watch it under Investigations.", id, str(in, "resource")), nil
 	}
-	return o.setupTool(name, in, by)
+	if out, err := o.setupTool(name, in, by); err == nil || !strings.HasPrefix(err.Error(), "unknown tool") {
+		return out, err
+	}
+	return o.skillTool(name, in, by)
 }
 
 func (o *Orchestrator) contextText(s *domain.State) string {
@@ -534,7 +540,16 @@ func (o *Orchestrator) contextText(s *domain.State) string {
 			open++
 		}
 	}
-	fmt.Fprintf(&b, "Open findings: %d. Pending approvals: %d. Setup stage: %s (get_setup_state has the detail). Documentation pages: %s (read_docs).", open, pendingApprovals(s), setup.Compute(s).Stage, strings.Join(DocPages(), ", "))
+	fmt.Fprintf(&b, "Open findings: %d. Pending approvals: %d. Setup stage: %s (get_setup_state has the detail). ", open, pendingApprovals(s), setup.Compute(s).Stage)
+	fmt.Fprintf(&b, "Runbooks: %d. Workflows: %d. Responders: ", len(s.Runbooks), len(s.Workflows))
+	for _, r := range s.Responders {
+		fmt.Fprintf(&b, "%s (%s, agent %s); ", r.ID, r.Signal, r.Agent)
+	}
+	fmt.Fprintf(&b, "Agent templates: ")
+	for _, t := range s.Templates {
+		fmt.Fprintf(&b, "%s; ", t.ID)
+	}
+	fmt.Fprintf(&b, "Documentation pages: %s (read_docs).", strings.Join(DocPages(), ", "))
 	return b.String()
 }
 

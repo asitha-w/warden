@@ -111,8 +111,9 @@ func SeedAgents(model string) []*AgentDef {
 	}
 }
 
-// SeedRunbooks is the tenant's starting guidance, one per app tier.
-func SeedRunbooks() []*Runbook {
+// ExampleRunbooks shows the shape of tenant guidance, one per app tier. A
+// tenant starts with none; Warden writes them from the operator's words.
+func ExampleRunbooks() []*Runbook {
 	t := time.Date(2026, 10, 28, 9, 0, 0, 0, time.UTC)
 	return []*Runbook{
 		{ID: "shop-web-vms", Name: "Shop web on VMs", Selector: map[string]string{"app": "shop", "tier": "web"}, UpdatedAt: t, UpdatedBy: "platform@shop.example", Body: `# Shop web on VMs
@@ -274,7 +275,9 @@ func NewState(model, reasoner string) *State {
 		Connections: []*Connection{},
 		Probe:       Probe{Status: ProbeNone, Hosts: []string{}, Expected: []string{}},
 		Cells:       []*Cell{},
-		Runbooks:    SeedRunbooks(),
+		Runbooks:    []*Runbook{}, // Warden writes them from the operator's words; ExampleRunbooks shows the shape
+		Workflows:   SeedWorkflows(),
+		Templates:   SeedTemplates(),
 		Responders:  SeedResponders(),
 		Agents:      SeedAgents(model),
 		Findings:    []*Finding{},
@@ -291,4 +294,27 @@ func NewState(model, reasoner string) *State {
 		s.Usage[a.ID] = &Usage{}
 	}
 	return s
+}
+
+// SeedWorkflows are the monitoring loops every tenant starts with: one per
+// responder, reading a provider or probe metric on a schedule. They are the
+// old hard-wired signal rules made visible and editable.
+func SeedWorkflows() []*Workflow {
+	t := time.Date(2026, 10, 28, 9, 0, 0, 0, time.UTC)
+	return []*Workflow{
+		{ID: "wf-disk-shop-web", Name: "Disk on shop web VMs", Every: 10, Selector: map[string]string{"app": "shop", "tier": "web"}, Collect: "metric", Source: "disk_used_percent", Condition: "above 90% on 3 consecutive reads", Trigger: "responder:disk-pressure-linux", Rule: "disk-pressure-linux/web-01", Hold: 3, Enabled: true, CreatedBy: "default", CreatedAt: t},
+		{ID: "wf-errors-shop-api", Name: "Error rate on shop API", Every: 10, Selector: map[string]string{"app": "shop", "tier": "api"}, Collect: "metric", Source: "error_rate_percent", Condition: "above 5% on 3 consecutive reads", Trigger: "responder:release-regression", Rule: "release-regression/aks-shop", Hold: 3, Enabled: true, CreatedBy: "default", CreatedAt: t},
+		{ID: "wf-http-edge", Name: "HTTP up on edge proxies", Every: 10, Selector: map[string]string{"app": "edge", "tier": "proxy"}, Collect: "metric", Source: "http_up", Condition: "0 on 3 consecutive reads while the host is started", Trigger: "responder:service-down", Rule: "service-down/edge-01", Hold: 3, Enabled: true, CreatedBy: "default", CreatedAt: t},
+		{ID: "wf-state-edge", Name: "Server state on edge proxies", Every: 10, Selector: map[string]string{"app": "edge", "tier": "proxy"}, Collect: "provider-state", Source: "state", Condition: "stopped with no operator stop event, 2 consecutive reads", Trigger: "responder:server-stopped", Rule: "server-stopped/edge-01", Hold: 2, Enabled: true, CreatedBy: "default", CreatedAt: t},
+	}
+}
+
+// SeedTemplates are the specialists Warden may add to a tenant.
+func SeedTemplates() []AgentTemplate {
+	inv := []string{"read_metrics", "tail_logs", "get_activity", "get_resource_state", "read_file", "record_evidence", "record_hypothesis", "propose_action", "conclude"}
+	return []AgentTemplate{
+		{ID: "nginx-specialist", Name: "nginx specialist", Role: "Investigates nginx and caching proxies", Description: "Reads the nginx error log and cache state first, knows the restart is safe and the cache must not be deleted, proposes one action under the responder's policy.", Tools: inv, Effort: "medium", MaxToolCalls: 20, Responders: []string{"service-down"}},
+		{ID: "kubernetes-specialist", Name: "Kubernetes specialist", Role: "Investigates rollouts and pod health", Description: "Reads rollout history, pod restarts and container logs first; prefers rollback over restart; proposes one action under the responder's policy.", Tools: inv, Effort: "medium", MaxToolCalls: 25, Responders: []string{"release-regression"}},
+		{ID: "cost-advisor", Name: "Cost advisor", Role: "Finds idle and oversized resources", Description: "Weekly review of utilisation against size. Recommends only; never changes anything.", Tools: []string{"read_metrics", "get_resource_state", "notify"}, Effort: "low", MaxToolCalls: 15},
+	}
 }

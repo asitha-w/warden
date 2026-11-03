@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -455,3 +456,100 @@ func (w *World) Execute(a Action) (string, error) {
 
 // Now is the simulation clock, used for scenario timestamps.
 func (w *World) Now() time.Time { return time.Now() }
+
+// Digest is the small payload a log workflow collects: what is new since the
+// cursor, how much of it is an error, and the distinct error signatures.
+type Digest struct {
+	Host       string         `json:"host"`
+	Path       string         `json:"path"`
+	NewLines   int            `json:"newLines"`
+	Errors     int            `json:"errors"`
+	Signatures []string       `json:"signatures"`
+	Sample     []string       `json:"sample"`
+	Cursor     map[string]int `json:"-"`
+}
+
+var (
+	digestNum  = regexp.MustCompile(`\d+`)
+	digestTime = regexp.MustCompile(`^(\w{3} +\d+ \d\d:\d\d:\d\d|\d{4}/\d\d/\d\d \d\d:\d\d:\d\d|\S+ - - \[[^\]]+\])\s*`)
+)
+
+func isErrorLine(line string) bool {
+	l := strings.ToLower(line)
+	for _, k := range []string{"error", "[crit]", "[emerg]", "killed", "failed", "denied", "out of memory"} {
+		if strings.Contains(l, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// Signature strips the timestamp, the host name and numbers so repeated
+// lines collapse into one.
+func Signature(host, line string) string {
+	s := digestTime.ReplaceAllString(line, "")
+	s = strings.TrimPrefix(s, host+" ")
+	s = digestNum.ReplaceAllString(s, "N")
+	s = strings.TrimRight(s, ".")
+	if len(s) > 100 {
+		s = s[:100]
+	}
+	return strings.TrimSpace(s)
+}
+
+// LogDigest aggregates the lines written since the cursor on the host. path
+// "*" covers every log on the host. The cursor maps path to line count and
+// is returned updated, so the caller keeps it per workflow and cell.
+func (w *World) LogDigest(host, path string, cursor map[string]int) (Digest, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	h := w.Hosts[host]
+	if h == nil {
+		return Digest{}, fmt.Errorf("unknown resource %q", host)
+	}
+	if h.State != "started" {
+		return Digest{}, fmt.Errorf("%s is %s; nothing to read", host, h.State)
+	}
+	d := Digest{Host: host, Path: path, Cursor: map[string]int{}}
+	for k, v := range cursor {
+		d.Cursor[k] = v
+	}
+	seen := map[string]bool{}
+	paths := []string{path}
+	if path == "*" {
+		paths = paths[:0]
+		for k := range h.Logs {
+			paths = append(paths, k)
+		}
+		sort.Strings(paths)
+	}
+	for _, p := range paths {
+		lines, ok := h.Logs[p]
+		if !ok {
+			if path != "*" {
+				return Digest{}, fmt.Errorf("no log %q on %s", p, host)
+			}
+			continue
+		}
+		from := d.Cursor[p]
+		if from > len(lines) {
+			from = 0
+		}
+		for _, line := range lines[from:] {
+			d.NewLines++
+			if isErrorLine(line) {
+				d.Errors++
+				sig := Signature(host, line)
+				if !seen[sig] {
+					seen[sig] = true
+					d.Signatures = append(d.Signatures, sig)
+				}
+				if len(d.Sample) < 3 {
+					d.Sample = append(d.Sample, line)
+				}
+			}
+		}
+		d.Cursor[p] = len(lines)
+	}
+	return d, nil
+}

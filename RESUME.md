@@ -2,6 +2,10 @@
 
 Working folder and git repo for Warden. Private GitHub repo: https://github.com/asitha-w/warden (default branch `main`). Forked from Beacon on 2026-11-03 with the brand renamed throughout; the Beacon history (2026-10-29 to 2026-11-03) is in https://github.com/asitha-w/beacon.
 
+## Skills and workflows, 2026-11-03 (afternoon)
+
+`docs/planning/warden-skills-and-workflows.md` is the decision page. In the code: `internal/domain` has `Workflow` and `AgentTemplate` with seeded defaults (the old signal rules are now the four default workflows; a tenant starts with no runbooks); `internal/world.LogDigest` is the cheap collector; `internal/signal` runs the tenant's workflows on their cadence and fires a responder or `Orchestrator.HandleWorkflow`, which announces and lets Warden pick the responder; `internal/agent/skills.go` adds `save_runbook`, `create_workflow`, `add_agent`, `list_templates`, `start_responder`; the scripted reasoner carries the conversations (provider choice opens the form through a `ui` event, a runbook is composed from one message, "watch the logs on X every N seconds" makes a workflow, "add an nginx specialist" binds a template). The home panel gained Needs you (every pending approval), Runbooks, Workflows and Agents bands; the UpCloud form has a simple mode. Headless check in light mode walked the whole show-and-tell line with no console errors. Not recorded yet: the operator asked to hold the recording and to record in the light theme when we do.
+
 ## Why Warden exists
 
 The first audience found Beacon's setup too much to hold: tenant, connection, cell, level, grant, probe. Warden keeps that model underneath and takes the human out of configuring it. The flow is: create the tenant, add a cloud provider credential, then the orchestrator takes over. It says what the connection found, what it can see and do at the current level, and hands over the one line to run when it needs more reach, then verifies the level went up. The configuration view is one overlay the orchestrator opens and points into: three bands (tenant, connections, cells), each showing real state and the one next action. The chat sits beside it.

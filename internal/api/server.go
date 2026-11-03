@@ -54,6 +54,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/cells/{id}/telemetry", s.setTelemetry)
 	mux.HandleFunc("POST /api/cells/{id}/labels", s.setLabels)
 	mux.HandleFunc("POST /api/runbooks", s.saveRunbook)
+	mux.HandleFunc("POST /api/workflows/{id}", s.workflowUpdate)
+	mux.HandleFunc("DELETE /api/workflows/{id}", s.deleteWorkflow)
 	mux.HandleFunc("DELETE /api/runbooks/{id}", s.deleteRunbook)
 	mux.HandleFunc("POST /api/probe/install", s.raiseAll)
 	mux.HandleFunc("POST /api/cells/{id}/grant", s.grant)
@@ -349,6 +351,53 @@ func (s *Server) onboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "cells": added})
+}
+
+// workflowUpdate pauses or resumes a workflow.
+func (s *Server) workflowUpdate(w http.ResponseWriter, r *http.Request) {
+	var in struct{ Enabled *bool }
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	var found bool
+	by := s.userName()
+	s.st.Update(func(st *domain.State) []store.Event {
+		wf := st.Workflow(r.PathValue("id"))
+		if wf == nil {
+			return nil
+		}
+		found = true
+		if in.Enabled != nil {
+			wf.Enabled = *in.Enabled
+		}
+		return []store.Event{{Type: "workflow", Data: wf}, store.Activity(st, "run", fmt.Sprintf("%s %s workflow %s.", by, map[bool]string{true: "resumed", false: "paused"}[wf.Enabled], wf.ID), "", false)}
+	})
+	if !found {
+		writeErr(w, 404, errors.New("no such workflow"))
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (s *Server) deleteWorkflow(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var found bool
+	s.st.Update(func(st *domain.State) []store.Event {
+		for i, wf := range st.Workflows {
+			if wf.ID == id {
+				found = true
+				st.Workflows = append(st.Workflows[:i], st.Workflows[i+1:]...)
+				return []store.Event{{Type: "workflows", Data: st.Workflows}, store.Activity(st, "run", "Workflow "+id+" removed.", "", false)}
+			}
+		}
+		return nil
+	})
+	if !found {
+		writeErr(w, 404, errors.New("no such workflow"))
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
 // setupState is the whole setup in one call: stage, connections, cells, next steps.

@@ -21,6 +21,9 @@ type Scripted struct {
 	cat   map[string]scenario.Definition
 	pace  time.Duration
 	model string
+	// pending is the one thing Warden asked the operator for and is waiting
+	// on: a runbook description for a cell.
+	pending struct{ kind, cell string }
 }
 
 // NewScripted returns a scripted reasoner.
@@ -105,7 +108,97 @@ func (s *Scripted) Chat(ctx context.Context, req ChatRequest, onDelta func(strin
 	}
 	switch {
 	case strings.HasPrefix(q, "[announce] tenant"):
-		answer = "I am Warden, the agent that looks after this estate. Add a cloud provider credential in the panel on the right and I take it from there: I will say what I found, what I can already see, and hand you the one thing to run when I need more reach."
+		answer = "I am Warden, the agent that looks after this estate. Which provider do you run on: Azure, UpCloud or AWS? Tell me and I open the right form; after that I take it from there."
+	case req.Call != nil && strings.HasPrefix(q, "[announce] workflow"):
+		first, _, _ := strings.Cut(strings.TrimPrefix(req.Question, "[announce] workflow "), "\n")
+		res := resourceIn(q)
+		rid := responderFor(q)
+		short := first
+		if i := strings.Index(first, ": "); i > 0 {
+			short = first[i+2:]
+		}
+		if rid != "" && res != "" {
+			out, err := req.Call(ctx, "start_responder", map[string]any{"responder": rid, "resource": res, "title": responderTitle(rid, res), "reason": short})
+			if err == nil {
+				answer = fmt.Sprintf("A workflow fired on %s: %s That matches responder %s, so I started it. %s", res, short, rid, out)
+			} else {
+				answer = fmt.Sprintf("A workflow fired on %s: %s I could not start responder %s: %s", res, short, rid, err.Error())
+			}
+		} else if res != "" {
+			out, _ := req.Call(ctx, "start_investigation", map[string]any{"resource": res, "task": "A workflow fired: " + short})
+			answer = fmt.Sprintf("A workflow fired on %s: %s No responder in the table fits, so I started a general investigation. %s", res, short, out)
+		} else {
+			answer = "A workflow fired but I could not tell which cell it was about: " + short
+		}
+	case s.pending.kind == "runbook" && req.Call != nil && !strings.Contains(q, "cancel") && !strings.Contains(q, "never mind"):
+		cell := s.pending.cell
+		s.pending = struct{ kind, cell string }{}
+		name, sel, body := s.composeRunbook(cell, req.Question)
+		out, err := req.Call(ctx, "save_runbook", map[string]any{"name": name, "selector": sel, "body": body})
+		if err != nil {
+			answer = "I could not save the runbook: " + err.Error()
+		} else {
+			answer = "I wrote the runbook from what you said and saved it. " + out + " Next, tell me what to watch: for example \"watch the logs on " + cell + " every 10 seconds and wake me on errors\"."
+		}
+	case s.pending.kind == "runbook":
+		s.pending = struct{ kind, cell string }{}
+		answer = "Fine, no runbook for now."
+	case req.Call == nil:
+		answer = "I am running in scripted mode without a model and have no tools in this context."
+	case !how && strings.Contains(q, "runbook") && resourceIn(q) != "":
+		s.pending = struct{ kind, cell string }{"runbook", resourceIn(q)}
+		answer = "Tell me in one message: what runs on " + resourceIn(q) + ", what is safe for me to do, what I must never do, and who to page. I write the runbook from that and show it under Runbooks before it is used."
+	case !how && strings.Contains(q, "runbook"):
+		answer = "Name the cell the runbook is for, for example \"add a runbook for edge-01\"."
+	case !how && (strings.Contains(q, "watch") || strings.Contains(q, "monitor")) && resourceIn(q) != "":
+		res := resourceIn(q)
+		every := everyIn(q)
+		source := "*"
+		switch {
+		case strings.Contains(q, "error log") || strings.Contains(q, "error.log"):
+			source = "/var/log/nginx/error.log"
+		case strings.Contains(q, "syslog"):
+			source = "/var/log/syslog"
+		}
+		out, err := req.Call(ctx, "create_workflow", map[string]any{"name": "Logs on " + res, "cell": res, "every_seconds": every, "collect": "log-digest", "source": source, "trigger": "wake-warden"})
+		if err != nil {
+			answer = "I could not create the workflow: " + err.Error()
+		} else {
+			answer = out + " You will see it fire in this thread, and I will say what I do about it."
+		}
+	case !how && (strings.Contains(q, "add") || strings.Contains(q, "create")) && (strings.Contains(q, "agent") || strings.Contains(q, "specialist")):
+		tid := templateIn(q)
+		if tid == "" {
+			out, _ := req.Call(ctx, "list_templates", map[string]any{})
+			answer = "Which specialist? These are the templates I can add:\n" + out
+			break
+		}
+		scope := ""
+		if res := resourceIn(q); res != "" {
+			s.st.View(func(st *domain.State) {
+				if c := st.Cell(res); c != nil {
+					scope = selectorText(CellSelector(c))
+				}
+			})
+		} else if strings.Contains(q, "edge") {
+			scope = "app=edge"
+		} else if strings.Contains(q, "shop") {
+			scope = "app=shop"
+		}
+		out, err := req.Call(ctx, "add_agent", map[string]any{"template": tid, "scope": scope})
+		if err != nil {
+			answer = "I could not add the agent: " + err.Error()
+		} else {
+			answer = out + " It is on the Agents page with its tools and budget; it runs only when its responder fires."
+		}
+	case !how && (q == "upcloud" || strings.Contains(q, "upcloud") && !strings.Contains(q, "onboard")) && !strings.Contains(q, "connection ") && len(q) < 40:
+		s.st.Publish(store.Event{Type: "ui", Data: map[string]string{"open": "upcloud"}})
+		answer = "UpCloud. I opened the token form in the panel: a sub-account token is enough to start, and it goes in the form, never here. When you save it I list what it can reach."
+	case !how && (q == "azure" || strings.Contains(q, "azure") && len(q) < 40):
+		s.st.Publish(store.Event{Type: "ui", Data: map[string]string{"open": "azure"}})
+		answer = "Azure. I opened the credential form in the panel: consent to the Warden app or bring your own app registration, at a resource group or the subscription. When you save it I list what it can reach."
+	case !how && (q == "aws" || strings.Contains(q, "aws") && len(q) < 40):
+		answer = "AWS is not supported yet; Azure and UpCloud are. Say which of those you want and I open the form."
 	case req.Call != nil && strings.HasPrefix(q, "[announce] connection"):
 		answer = withState("Your connection is validated.")
 	case req.Call != nil && strings.HasPrefix(q, "[announce] cell"):
@@ -177,6 +270,10 @@ func (s *Scripted) Chat(ctx context.Context, req ChatRequest, onDelta func(strin
 }
 
 var connRe = regexp.MustCompile(`conn-[0-9a-f]+`)
+
+// sentenceRe splits on a full stop followed by space or end, a semicolon or
+// a newline, so dots inside addresses and paths survive.
+var sentenceRe = regexp.MustCompile(`\.(?:\s+|$)|;|\n`)
 
 // setupSummary is the scripted reasoner's one-paragraph reading of the setup
 // overview: what exists, and the one next step with who does it.
@@ -302,4 +399,139 @@ func docSummary(page, md string) string {
 		return ""
 	}
 	return "It covers: " + strings.Join(heads, "; ") + "."
+}
+
+// responderFor picks the responder a workflow hit maps to, from the words in
+// the digest. Deterministic and small on purpose.
+func responderFor(q string) string {
+	switch {
+	case strings.Contains(q, "nginx") || strings.Contains(q, "out of memory") || strings.Contains(q, "killed") || strings.Contains(q, "failed with result"):
+		return "service-down"
+	case strings.Contains(q, "stopped"):
+		return "server-stopped"
+	case strings.Contains(q, "disk") || strings.Contains(q, "no space"):
+		return "disk-pressure-linux"
+	case strings.Contains(q, "error rate") || strings.Contains(q, " 502 ") || strings.Contains(q, "upstream"):
+		return "release-regression"
+	}
+	return ""
+}
+
+func responderTitle(rid, res string) string {
+	switch rid {
+	case "service-down":
+		return "nginx on " + res + " is failing"
+	case "server-stopped":
+		return res + " is stopped without an operator event"
+	case "disk-pressure-linux":
+		return "Disk filling on " + res
+	case "release-regression":
+		return "Errors on " + res + " after a rollout"
+	}
+	return "Workflow hit on " + res
+}
+
+func everyIn(q string) int {
+	for _, p := range []struct {
+		words string
+		secs  int
+	}{{"every 5 seconds", 5}, {"every 10 seconds", 10}, {"every 15 seconds", 15}, {"every 30 seconds", 30}, {"every minute", 60}, {"every 2 minutes", 120}, {"every 5 minutes", 300}, {"every 10 minutes", 600}, {"every hour", 3600}} {
+		if strings.Contains(q, p.words) {
+			return p.secs
+		}
+	}
+	return 60
+}
+
+func templateIn(q string) string {
+	switch {
+	case strings.Contains(q, "nginx") || strings.Contains(q, "proxy") || strings.Contains(q, "edge"):
+		return "nginx-specialist"
+	case strings.Contains(q, "kubernetes") || strings.Contains(q, "k8s") || strings.Contains(q, "aks") || strings.Contains(q, "rollout"):
+		return "kubernetes-specialist"
+	case strings.Contains(q, "cost"):
+		return "cost-advisor"
+	}
+	return ""
+}
+
+// composeRunbook writes a runbook from one operator message about a cell:
+// the message is kept whole as the description and its sentences are sorted
+// into the sections by their words. Warden says it wrote it from their words.
+func (s *Scripted) composeRunbook(cellID, text string) (name, selector, body string) {
+	var c *domain.Cell
+	s.st.View(func(st *domain.State) {
+		if x := st.Cell(cellID); x != nil {
+			cp := *x
+			c = &cp
+		}
+	})
+	app, kind := cellID, "cells"
+	sel := map[string]string{}
+	if c != nil {
+		sel = CellSelector(c)
+		if a := c.Labels["app"]; a != "" {
+			app = strings.ToUpper(a[:1]) + a[1:]
+		}
+		kind = c.Kind
+	}
+	name = fmt.Sprintf("%s on %s", app, kind)
+	selector = selectorText(sel)
+	if selector == "" {
+		selector = "cell=" + cellID
+	}
+	var fixes, never, escalate, signals, rest []string
+	for _, raw := range sentenceRe.Split(text, -1) {
+		sent := strings.TrimSpace(raw)
+		if sent == "" {
+			continue
+		}
+		l := strings.ToLower(sent)
+		switch {
+		case strings.Contains(l, "never") || strings.Contains(l, "do not") || strings.Contains(l, "don't"):
+			never = append(never, sent)
+		case strings.Contains(l, "page") || strings.Contains(l, "escalat") || strings.Contains(l, "@") || strings.Contains(l, "on-call") || strings.Contains(l, "slack"):
+			escalate = append(escalate, sent)
+		case strings.Contains(l, "safe") || strings.Contains(l, "restart") || strings.Contains(l, "rotate") || strings.Contains(l, "clear") || strings.Contains(l, "fix"):
+			fixes = append(fixes, sent)
+		case strings.Contains(l, "normal") || strings.Contains(l, "above") || strings.Contains(l, "below") || strings.Contains(l, "%"):
+			signals = append(signals, sent)
+		default:
+			rest = append(rest, sent)
+		}
+	}
+	unit := "the service named in the description"
+	for _, u := range []string{"nginx", "postgres", "redis", "shop-api", "shop-web", "haproxy", "varnish"} {
+		if strings.Contains(strings.ToLower(text), u) {
+			unit = u
+			break
+		}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s\n\n", name)
+	fmt.Fprintf(&b, "Written by Warden from the operator's words on %s. Edit freely.\n\n", time.Now().Format("2006-01-02"))
+	if len(rest) > 0 {
+		b.WriteString(strings.Join(rest, ". ") + ".\n\n")
+	}
+	fmt.Fprintf(&b, "## Applies when\n- Cells labelled %s running unit %s.\n\n", selector, unit)
+	section := func(title string, items []string, numbered bool, empty string) {
+		fmt.Fprintf(&b, "## %s\n", title)
+		if len(items) == 0 {
+			b.WriteString("- " + empty + "\n\n")
+			return
+		}
+		for i, it := range items {
+			if numbered {
+				fmt.Fprintf(&b, "%d. %s.\n", i+1, it)
+			} else {
+				fmt.Fprintf(&b, "- %s.\n", it)
+			}
+		}
+		b.WriteString("\n")
+	}
+	section("Health signals", signals, false, "Not stated yet; the workflows on this cell define the signals.")
+	section("Known fixes, in order", fixes, true, "None stated; every action needs approval.")
+	section("Never", never, false, "Nothing stated; delete-class actions are denied by policy anyway.")
+	section("Escalation", escalate, false, "Not stated; findings escalate to the tenant owner.")
+	return name, selector, strings.TrimSpace(b.String())
 }

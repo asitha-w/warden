@@ -29,7 +29,7 @@ INIT_JS = """
   const c = document.createElement('div');
   c.id = '__cursor';
   c.style.cssText = 'position:fixed;left:0;top:0;width:18px;height:18px;z-index:99999;pointer-events:none;transform:translate(-2px,-2px);transition:transform .05s';
-  c.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M5 3l14 8.5-6.5 1.5L10 20z" fill="#fff" stroke="#000" stroke-width="1.5" stroke-linejoin="round"/></svg>';
+  c.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M5 3l14 8.5-6.5 1.5L10 20z" fill="#000" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/></svg>';
   document.addEventListener('DOMContentLoaded', () => document.body.appendChild(c));
   window.addEventListener('mousemove', (e) => { c.style.left = e.clientX + 'px'; c.style.top = e.clientY + 'px'; });
   window.addEventListener('mousedown', () => { c.style.transform = 'translate(-2px,-2px) scale(.8)'; });
@@ -37,8 +37,8 @@ INIT_JS = """
   window.__title = (t, sub) => {
     let o = document.getElementById('__title');
     if (!o) { o = document.createElement('div'); o.id = '__title'; document.body.appendChild(o); }
-    o.style.cssText = 'position:fixed;inset:0;z-index:99998;display:grid;place-items:center;background:#09090b;color:#fafafa;font-family:Geist,Inter,system-ui,sans-serif;transition:opacity .4s';
-    o.innerHTML = '<div style="text-align:center;max-width:720px"><div style="font-size:14px;letter-spacing:.2em;color:#a1a1aa;text-transform:uppercase;margin-bottom:16px">' + sub + '</div><div style="font-size:44px;font-weight:600;letter-spacing:-.02em">' + t + '</div></div>';
+    o.style.cssText = 'position:fixed;inset:0;z-index:99998;display:grid;place-items:center;background:#ffffff;color:#09090b;font-family:Geist,Inter,system-ui,sans-serif;transition:opacity .4s';
+    o.innerHTML = '<div style="text-align:center;max-width:720px"><div style="font-size:14px;letter-spacing:.2em;color:#71717a;text-transform:uppercase;margin-bottom:16px">' + sub + '</div><div style="font-size:44px;font-weight:600;letter-spacing:-.02em">' + t + '</div></div>';
     o.style.opacity = '1';
   };
   window.__untitle = () => { const o = document.getElementById('__title'); if (o) { o.style.opacity = '0'; setTimeout(() => o.remove(), 450); } };
@@ -279,7 +279,7 @@ def main():
             raise SystemExit("server did not start")
         with sync_playwright() as p:
             browser = p.chromium.launch(channel=os.environ.get("WARDEN_RECORD_CHANNEL", "chrome"))
-            ctx = browser.new_context(viewport={"width": W, "height": H}, record_video_dir=str(OUT), record_video_size={"width": W, "height": H}, color_scheme="dark")
+            ctx = browser.new_context(viewport={"width": W, "height": H}, record_video_dir=str(OUT), record_video_size={"width": W, "height": H}, color_scheme="light")
             ctx.add_init_script(INIT_JS)
             page = ctx.new_page()
             d = Demo(page)

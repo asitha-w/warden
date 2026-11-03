@@ -12,6 +12,7 @@ Warden started on 2026-11-03 from the Beacon codebase (the Go service, the agent
 | `internal/domain` | Entities the console shows and the agents act on. No dependencies. |
 | `internal/store` | In-memory system of record for one tenant plus the event bus. |
 | `web/js/pages/home.js` | The home page: the orchestrator's thread beside the setup panel (tenant, connections, cells) rendered from `GET /api/setup`. |
+| `internal/agent/skills.go` | Warden's skills beyond setup: runbooks by conversation, monitoring workflows, specialists from templates, routing a workflow hit to a responder. |
 | `internal/setup` | Raises a tenant from a credential to a managed estate: onboarding, the grant, API access, the probe, and the setup overview (`GET /api/setup`). The API handlers and the orchestrator's setup tools both call it. |
 | `internal/world` | Simulated estate: hosts, metric streams, services with versions, logs, files, activity. |
 | `internal/scenario` | The faults the demo injects and the scripted playbook for each. |

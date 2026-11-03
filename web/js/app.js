@@ -4,7 +4,7 @@
 import { el } from './ds.js';
 import { store, apply } from './store.js';
 import { connect } from './api.js';
-import { route } from './router.js';
+import { route, go } from './router.js';
 import { shell, setupShell, demobar, toast } from './shell.js';
 import { pageLogin, pageSetupTenant } from './pages/setup.js';
 import { pageFindings, drawTiles } from './pages/findings.js';
@@ -15,7 +15,7 @@ import { pageRunbooks } from './pages/runbooks.js';
 import { pageCells, pageCell } from './pages/cells.js';
 import { pageApprovals, pageConnections, pageResponders, pageConsumption } from './pages/admin.js';
 import { pageDocs } from './pages/docs.js';
-import { pageHome } from './pages/home.js';
+import { pageHome, openForm } from './pages/home.js';
 import { api } from './api.js';
 
 const PAGES = {
@@ -68,6 +68,7 @@ function onEvent(ev) {
   else if (hint === 'metrics') drawTiles();
   else if (hint && hint.kind === 'delta') { const n = document.querySelector(`[data-msg="${hint.id}"]`); if (n) n.textContent = hint.text; else scheduleRender(); }
   else if (hint && hint.kind === 'toast') toast(hint.text);
+  else if (hint && hint.kind === 'ui') { if (hint.data && hint.data.open) { openForm(hint.data.open); go('warden'); } }
   if (ev.type === 'snapshot' || ev.type === 'user' || ev.type === 'tenant') {
     // keep the route valid after sign-in, sign-out and reset
     const s = store.state; const h = location.hash.replace(/^#/, '');

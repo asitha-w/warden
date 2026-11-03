@@ -348,6 +348,47 @@ type Runbook struct {
 // Matches reports whether the runbook applies to the resource.
 func (rb *Runbook) Matches(r *Cell) bool { return selectorMatches(rb.Selector, r) }
 
+// Workflow is one monitoring loop the tenant owns. It runs in the runtime on
+// a schedule, costs no tokens, collects a small fixed payload from the cells
+// its selector matches, evaluates a deterministic condition, and triggers
+// either a responder directly or Warden, which then decides. Agents never
+// poll; a model runs only when a workflow fires.
+type Workflow struct {
+	ID         string            `json:"id"`
+	Name       string            `json:"name"`
+	Every      int               `json:"every"` // seconds between runs
+	Selector   map[string]string `json:"selector"`
+	Collect    string            `json:"collect"`        // metric, log-digest, provider-state
+	Source     string            `json:"source"`         // metric name, log path or * for every log
+	Condition  string            `json:"condition"`      // human-readable; the evaluation is in the signal loop
+	Trigger    string            `json:"trigger"`        // responder:<id> or wake-warden
+	Rule       string            `json:"rule,omitempty"` // metric workflows: the check in the signal loop
+	Hold       int               `json:"hold,omitempty"` // consecutive runs the condition must hold
+	Enabled    bool              `json:"enabled"`
+	CreatedBy  string            `json:"createdBy,omitempty"`
+	CreatedAt  time.Time         `json:"createdAt"`
+	LastRun    *time.Time        `json:"lastRun,omitempty"`
+	LastResult string            `json:"lastResult,omitempty"`
+	Fired      int               `json:"fired"`
+}
+
+// Matches reports whether the workflow covers the cell.
+func (wf *Workflow) Matches(r *Cell) bool { return selectorMatches(wf.Selector, r) }
+
+// AgentTemplate is a specialist Warden may instantiate for a tenant. Warden
+// picks a template and binds it to a scope; it never writes a prompt or
+// grants a tool the template does not carry.
+type AgentTemplate struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Role         string   `json:"role"`
+	Description  string   `json:"description"`
+	Tools        []string `json:"tools"`
+	Effort       string   `json:"effort"`
+	MaxToolCalls int      `json:"maxToolCalls"`
+	Responders   []string `json:"responders"` // responders it takes over inside its scope
+}
+
 // Tool policies.
 const (
 	PolicyAllow = "allow"
@@ -382,16 +423,19 @@ const (
 // AgentDef is a managed agent in the tenant: the orchestrator the human talks
 // to, the specialists it starts, and the deterministic workers that need no model.
 type AgentDef struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Kind         string   `json:"kind"`
-	Role         string   `json:"role"`
-	Description  string   `json:"description"`
-	Model        string   `json:"model,omitempty"`
-	Effort       string   `json:"effort,omitempty"`
-	Tools        []string `json:"tools"`
-	Enabled      bool     `json:"enabled"`
-	MaxToolCalls int      `json:"maxToolCalls,omitempty"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Kind         string            `json:"kind"`
+	Role         string            `json:"role"`
+	Description  string            `json:"description"`
+	Model        string            `json:"model,omitempty"`
+	Effort       string            `json:"effort,omitempty"`
+	Tools        []string          `json:"tools"`
+	Enabled      bool              `json:"enabled"`
+	MaxToolCalls int               `json:"maxToolCalls,omitempty"`
+	Template     string            `json:"template,omitempty"` // the template it was made from
+	Scope        map[string]string `json:"scope,omitempty"`    // label selector; empty means every cell
+	AddedBy      string            `json:"addedBy,omitempty"`
 }
 
 // Usage is model consumption for one run or one agent.
@@ -592,6 +636,8 @@ type State struct {
 	Probe       Probe             `json:"probe"`
 	Cells       []*Cell           `json:"cells"`
 	Runbooks    []*Runbook        `json:"runbooks"`
+	Workflows   []*Workflow       `json:"workflows"`
+	Templates   []AgentTemplate   `json:"templates"`
 	Responders  []*Responder      `json:"responders"`
 	Agents      []*AgentDef       `json:"agents"`
 	Findings    []*Finding        `json:"findings"`
@@ -738,6 +784,26 @@ func (s *State) RunbooksFor(cellID string) []*Runbook {
 	}
 	sort.SliceStable(out, func(i, j int) bool { return len(out[i].Selector) > len(out[j].Selector) })
 	return out
+}
+
+// Workflow returns the workflow with the id, or nil.
+func (s *State) Workflow(id string) *Workflow {
+	for _, w := range s.Workflows {
+		if w.ID == id {
+			return w
+		}
+	}
+	return nil
+}
+
+// Template returns the agent template with the id, or nil.
+func (s *State) Template(id string) *AgentTemplate {
+	for i := range s.Templates {
+		if s.Templates[i].ID == id {
+			return &s.Templates[i]
+		}
+	}
+	return nil
 }
 
 // Runbook returns the runbook with the id, or nil.
