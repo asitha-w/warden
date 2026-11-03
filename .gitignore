@@ -1,0 +1,9 @@
+bin/
+dist/
+.DS_Store
+.env
+*.log
+node_modules/
+.tools/
+tools/record/out/
+tools/record/.venv/

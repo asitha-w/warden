@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" font-family="Geist, Inter, Segoe UI, system-ui, sans-serif" font-size="15">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#71717a"/></marker>
+    <marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#2dd4bf"/></marker>
+  </defs>
+  <rect width="1600" height="900" fill="#09090b"/>
+  <text x="40" y="52" font-size="26" font-weight="600" fill="#fafafa">Warden · how a tenant is put together</text>
+  <text x="40" y="78" fill="#a1a1aa">A tenant is a collection of cells served by one runtime. Connections discover what could be managed; cells are what is managed; one agent team works them all.</text>
+
+  <!-- Operator -->
+  <rect x="40" y="130" width="220" height="92" rx="12" fill="#0c0c0e" stroke="#27272a"/>
+  <text x="60" y="160" font-weight="600" fill="#fafafa">Operator</text>
+  <text x="60" y="184" fill="#a1a1aa">console · Ask Warden</text>
+  <text x="60" y="206" fill="#a1a1aa">approvals · runbooks</text>
+
+  <!-- Tenant runtime -->
+  <rect x="320" y="110" width="760" height="760" rx="16" fill="#0c0c0e" stroke="#3f3f46" stroke-dasharray="6 5"/>
+  <text x="340" y="140" font-weight="600" fill="#fafafa">Tenant runtime</text>
+  <text x="340" y="162" fill="#a1a1aa">isolated workers · own credentials · one static egress 94.237.x.x</text>
+
+  <!-- Agent team -->
+  <rect x="340" y="190" width="720" height="170" rx="12" fill="#09090b" stroke="#27272a"/>
+  <text x="360" y="218" font-weight="600" fill="#fafafa">Agent team · one per tenant, works every cell</text>
+  <g>
+    <rect x="360" y="236" width="160" height="104" rx="10" fill="#1a1707" stroke="#fbbf24"/>
+    <text x="376" y="262" font-weight="600" fill="#fbbf24">Orchestrator</text>
+    <text x="376" y="284" fill="#a1a1aa" font-size="13">talks to the operator</text>
+    <text x="376" y="302" fill="#a1a1aa" font-size="13">routes signals by the</text>
+    <text x="376" y="320" fill="#a1a1aa" font-size="13">responder table</text>
+    <rect x="540" y="236" width="160" height="104" rx="10" fill="#071a19" stroke="#2dd4bf"/>
+    <text x="556" y="262" font-weight="600" fill="#2dd4bf">Investigator</text>
+    <text x="556" y="284" fill="#a1a1aa" font-size="13">reads, records evidence</text>
+    <text x="556" y="302" fill="#a1a1aa" font-size="13">with pointers, proposes</text>
+    <text x="556" y="320" fill="#a1a1aa" font-size="13">one action · model</text>
+    <rect x="720" y="236" width="160" height="104" rx="10" fill="#111" stroke="#52525b"/>
+    <text x="736" y="262" font-weight="600" fill="#fafafa">Remediator</text>
+    <text x="736" y="284" fill="#a1a1aa" font-size="13">runs the approved</text>
+    <text x="736" y="302" fill="#a1a1aa" font-size="13">action, write identity</text>
+    <text x="736" y="320" fill="#a1a1aa" font-size="13">no model</text>
+    <rect x="900" y="236" width="140" height="104" rx="10" fill="#111" stroke="#52525b"/>
+    <text x="916" y="262" font-weight="600" fill="#fafafa">Verifier</text>
+    <text x="916" y="284" fill="#a1a1aa" font-size="13">claims need pointers</text>
+    <text x="916" y="302" fill="#a1a1aa" font-size="13">re-reads the signal</text>
+    <text x="916" y="320" fill="#a1a1aa" font-size="13">no model</text>
+  </g>
+
+  <!-- Policy gate + signal loop -->
+  <rect x="340" y="380" width="350" height="110" rx="12" fill="#09090b" stroke="#27272a"/>
+  <text x="360" y="408" font-weight="600" fill="#fafafa">Signal loop · deterministic</text>
+  <text x="360" y="432" fill="#a1a1aa" font-size="13">ticks every cell's channel, evaluates responder rules,</text>
+  <text x="360" y="452" fill="#a1a1aa" font-size="13">opens findings, verifies fixes. No model, no cost.</text>
+  <rect x="710" y="380" width="350" height="110" rx="12" fill="#09090b" stroke="#27272a"/>
+  <text x="730" y="408" font-weight="600" fill="#fafafa">Policy gate · per responder, per action</text>
+  <text x="730" y="432" fill="#a1a1aa" font-size="13">allow · ask (human approves) · deny</text>
+  <text x="730" y="452" fill="#a1a1aa" font-size="13">Review mode asks; Autonomous turns ask into allow.</text>
+  <text x="730" y="472" fill="#a1a1aa" font-size="13">Runbooks guide, policy decides.</text>
+
+  <!-- Cells -->
+  <text x="340" y="530" font-weight="600" fill="#fafafa">Cells · the unit of management, one isolated channel each</text>
+  <g>
+    <rect x="340" y="548" width="225" height="300" rx="12" fill="#09090b" stroke="#2dd4bf"/>
+    <text x="356" y="576" font-family="Geist Mono, monospace" font-weight="600" fill="#fafafa">web-01</text>
+    <text x="356" y="596" fill="#a1a1aa" font-size="13">Azure VM · tier probe</text>
+    <text x="356" y="624" fill="#fafafa" font-size="13" font-weight="600">Provider sensors</text>
+    <text x="356" y="644" fill="#a1a1aa" font-size="13">platform metrics · health</text>
+    <text x="356" y="662" fill="#a1a1aa" font-size="13">activity log · run command</text>
+    <text x="356" y="690" fill="#fafafa" font-size="13" font-weight="600">Probe telemetry</text>
+    <text x="356" y="710" fill="#a1a1aa" font-size="13">host metrics · processes</text>
+    <text x="356" y="728" fill="#a1a1aa" font-size="13">nginx · syslog · access.log</text>
+    <text x="356" y="756" fill="#fafafa" font-size="13" font-weight="600">Labels</text>
+    <text x="356" y="776" fill="#a1a1aa" font-size="13" font-family="Geist Mono, monospace">app=shop tier=web</text>
+    <text x="356" y="794" fill="#a1a1aa" font-size="13" font-family="Geist Mono, monospace">env=production</text>
+    <text x="356" y="822" fill="#a1a1aa" font-size="13">→ runbook: Shop web on VMs</text>
+
+    <rect x="585" y="548" width="225" height="300" rx="12" fill="#09090b" stroke="#2dd4bf"/>
+    <text x="601" y="576" font-family="Geist Mono, monospace" font-weight="600" fill="#fafafa">aks-shop</text>
+    <text x="601" y="596" fill="#a1a1aa" font-size="13">AKS cluster · tier probe</text>
+    <text x="601" y="624" fill="#fafafa" font-size="13" font-weight="600">Provider sensors</text>
+    <text x="601" y="644" fill="#a1a1aa" font-size="13">platform metrics · health</text>
+    <text x="601" y="662" fill="#a1a1aa" font-size="13">kubernetes api · rollouts</text>
+    <text x="601" y="690" fill="#fafafa" font-size="13" font-weight="600">Probe telemetry</text>
+    <text x="601" y="710" fill="#a1a1aa" font-size="13">kubelet · kube-state</text>
+    <text x="601" y="728" fill="#a1a1aa" font-size="13">workload logs · OTLP in</text>
+    <text x="601" y="756" fill="#fafafa" font-size="13" font-weight="600">Labels</text>
+    <text x="601" y="776" fill="#a1a1aa" font-size="13" font-family="Geist Mono, monospace">app=shop tier=api</text>
+    <text x="601" y="794" fill="#a1a1aa" font-size="13" font-family="Geist Mono, monospace">env=production</text>
+    <text x="601" y="822" fill="#a1a1aa" font-size="13">→ runbook: Shop API on AKS</text>
+
+    <rect x="830" y="548" width="225" height="300" rx="12" fill="#09090b" stroke="#52525b"/>
+    <text x="846" y="576" font-family="Geist Mono, monospace" font-weight="600" fill="#fafafa">edge-01</text>
+    <text x="846" y="596" fill="#a1a1aa" font-size="13">UpCloud server · tier basic</text>
+    <text x="846" y="624" fill="#fafafa" font-size="13" font-weight="600">Provider sensors</text>
+    <text x="846" y="644" fill="#a1a1aa" font-size="13">server state · power ops</text>
+    <text x="846" y="690" fill="#fafafa" font-size="13" font-weight="600">Probe telemetry</text>
+    <text x="846" y="710" fill="#71717a" font-size="13">not installed yet</text>
+    <text x="846" y="756" fill="#fafafa" font-size="13" font-weight="600">Labels</text>
+    <text x="846" y="776" fill="#a1a1aa" font-size="13" font-family="Geist Mono, monospace">app=edge tier=proxy</text>
+    <text x="846" y="822" fill="#a1a1aa" font-size="13">→ runbook: Edge proxy servers</text>
+  </g>
+
+  <!-- Connections (right) -->
+  <text x="1130" y="140" font-weight="600" fill="#fafafa">Connections · identity at a scope</text>
+  <text x="1130" y="162" fill="#a1a1aa" font-size="13">discover a catalogue; manage nothing by themselves</text>
+  <rect x="1130" y="186" width="430" height="150" rx="12" fill="#0c0c0e" stroke="#27272a"/>
+  <text x="1150" y="214" font-weight="600" fill="#fafafa">Azure · rg-shop-prod</text>
+  <text x="1150" y="238" fill="#a1a1aa" font-size="13">directory · consent or own app registration</text>
+  <text x="1150" y="258" fill="#a1a1aa" font-size="13">read scope: subscription or RG · Reader roles</text>
+  <text x="1150" y="278" fill="#a1a1aa" font-size="13">write scope: RG or resource · Contributor roles</text>
+  <text x="1150" y="304" fill="#2dd4bf" font-size="13">catalogue: web-01, aks-shop · la-shop, storage: not supported yet</text>
+  <text x="1150" y="324" fill="#71717a" font-size="13">vm-staging-01 outside scope, never seen</text>
+  <rect x="1130" y="356" width="430" height="110" rx="12" fill="#0c0c0e" stroke="#27272a"/>
+  <text x="1150" y="384" font-weight="600" fill="#fafafa">UpCloud · sub-account warden-ro</text>
+  <text x="1150" y="408" fill="#a1a1aa" font-size="13">API token; the sub-account's grants are the frame</text>
+  <text x="1150" y="428" fill="#a1a1aa" font-size="13">server.read · database.read · server.power</text>
+  <text x="1150" y="452" fill="#2dd4bf" font-size="13">catalogue: edge-01 · db-01: not supported yet</text>
+
+  <!-- Providers -->
+  <rect x="1130" y="548" width="200" height="140" rx="12" fill="#0c0c0e" stroke="#27272a"/>
+  <text x="1150" y="576" font-weight="600" fill="#fafafa">Azure</text>
+  <text x="1150" y="600" fill="#a1a1aa" font-size="13">Resource Graph · Monitor</text>
+  <text x="1150" y="618" fill="#a1a1aa" font-size="13">Resource Health · Activity Log</text>
+  <text x="1150" y="636" fill="#a1a1aa" font-size="13">Run Command · AKS RBAC</text>
+  <rect x="1360" y="548" width="200" height="140" rx="12" fill="#0c0c0e" stroke="#27272a"/>
+  <text x="1380" y="576" font-weight="600" fill="#fafafa">UpCloud</text>
+  <text x="1380" y="600" fill="#a1a1aa" font-size="13">/1.3/server · state</text>
+  <text x="1380" y="618" fill="#a1a1aa" font-size="13">power operations</text>
+  <text x="1380" y="636" fill="#a1a1aa" font-size="13">managed db metrics</text>
+  <rect x="1130" y="710" width="430" height="138" rx="12" fill="#0c0c0e" stroke="#27272a"/>
+  <text x="1150" y="738" font-weight="600" fill="#fafafa">Probe on a cell</text>
+  <text x="1150" y="762" fill="#a1a1aa" font-size="13">unmodified OpenTelemetry Collector · config from Warden over OpAMP</text>
+  <text x="1150" y="782" fill="#a1a1aa" font-size="13">dials out over mTLS to the runtime, per-cell certificate</text>
+  <text x="1150" y="802" fill="#a1a1aa" font-size="13">host metrics · processes · logs · receivers · OTLP from the app</text>
+  <text x="1150" y="826" fill="#71717a" font-size="13">nothing listens on the host; the operator installs it with one command</text>
+
+  <!-- arrows -->
+  <path d="M260 176 L320 176" stroke="#71717a" stroke-width="1.5" marker-end="url(#a)"/>
+  <path d="M440 340 L440 380" stroke="#71717a" stroke-width="1.5" marker-end="url(#a)"/>
+  <path d="M620 340 L620 380" stroke="#71717a" stroke-width="1.5" marker-end="url(#a)"/>
+  <path d="M800 340 L800 380" stroke="#71717a" stroke-width="1.5" marker-end="url(#a)"/>
+  <path d="M452 490 L452 548" stroke="#2dd4bf" stroke-width="2" marker-end="url(#ab)"/>
+  <path d="M697 490 L697 548" stroke="#2dd4bf" stroke-width="2" marker-end="url(#ab)"/>
+  <path d="M942 490 L942 548" stroke="#2dd4bf" stroke-width="2" marker-end="url(#ab)"/>
+  <path d="M1130 261 L1080 261" stroke="#71717a" stroke-width="1.5" marker-end="url(#a)"/>
+  <path d="M1130 411 L1080 411" stroke="#71717a" stroke-width="1.5" marker-end="url(#a)"/>
+  <path d="M1055 700 L1130 700" stroke="#71717a" stroke-width="1.5" marker-end="url(#a)" marker-start="url(#a)"/>
+  <text x="1058" y="690" fill="#71717a" font-size="12">channel</text>
+  <text x="1085" y="252" fill="#71717a" font-size="12">onboard</text>
+</svg>

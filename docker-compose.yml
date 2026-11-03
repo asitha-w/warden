@@ -1,0 +1,10 @@
+services:
+  warden:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      WARDEN_ADDR: ":8080"
+      WARDEN_MODEL: ${WARDEN_MODEL:-claude-opus-5-5}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    restart: unless-stopped
