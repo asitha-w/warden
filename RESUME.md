@@ -2,6 +2,14 @@
 
 Working folder and git repo for Warden. Private GitHub repo: https://github.com/asitha-w/warden (default branch `main`). Forked from Beacon on 2026-11-03 with the brand renamed throughout; the Beacon history (2026-10-29 to 2026-11-03) is in https://github.com/asitha-w/beacon.
 
+## To do, parked 2026-11-03
+
+1. **Simulation through Warden.** The demo bar buttons inject faults outside the conversation. Parked as an improvement: "simulate a disk fill on edge-01" as a Warden skill, so the whole demo stays in the thread and the bar can go.
+2. Dashboards as a skill: a saved query set with a layout, drawn by a deterministic renderer.
+3. Scheduled jobs as a skill: a catalogue action with a cadence.
+4. Metric watches with richer conditions (rate of change, two metrics) once they are needed.
+5. The scripted runbook composer sorts sentences by keyword; with a model Warden writes the sections properly.
+
 ## Step-by-step demo, 2026-11-03 (night)
 
 Operator feedback: the home page jittered and the demo should be step by step in fresh sessions. Fixed: `render()` keeps the scroll position of every `[data-keep-scroll]` container across rebuilds (the thread stays pinned to its end, the panel keeps its place), streaming deltas re-pin the thread, and watch ticks redraw at most every 2.5 s. `POST /api/chat/new` (`Orchestrator.NewSession`) clears the thread and keeps the estate; the "New session" button sits beside Send. `#watches` is a page in the rail showing every watch running with cadence, scope, condition, trigger, standing order, last run and fired count. The recorder is five steps, each after "New session", and cuts one clip per step at the title cards; `docs/recordings/` has the full take and the five clips.
