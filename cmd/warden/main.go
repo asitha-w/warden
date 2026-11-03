@@ -17,6 +17,7 @@ import (
 	"github.com/asitha-w/warden/internal/agent"
 	"github.com/asitha-w/warden/internal/api"
 	"github.com/asitha-w/warden/internal/domain"
+	"github.com/asitha-w/warden/internal/setup"
 	sigloop "github.com/asitha-w/warden/internal/signal"
 	"github.com/asitha-w/warden/internal/store"
 	"github.com/asitha-w/warden/internal/world"
@@ -61,7 +62,8 @@ func main() {
 	} else {
 		reasoner = agent.NewScripted(st, pace, model)
 	}
-	orch := agent.NewOrchestrator(st, w, gate, reasoner, model, log)
+	su := setup.New(st)
+	orch := agent.NewOrchestrator(st, w, gate, reasoner, su, model, log)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -95,7 +97,7 @@ func main() {
 		}
 		webFS = sub
 	}
-	srv := &http.Server{Addr: addr, Handler: api.New(st, w, orch, webFS, reset, log).Handler(), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: addr, Handler: api.New(st, w, orch, su, webFS, reset, log).Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		log.Info("warden listening", "addr", addr, "reasoner", reasonerName, "model", model, "tick", tick)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

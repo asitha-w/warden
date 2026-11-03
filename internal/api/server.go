@@ -17,6 +17,7 @@ import (
 	"github.com/asitha-w/warden/internal/agent"
 	"github.com/asitha-w/warden/internal/domain"
 	"github.com/asitha-w/warden/internal/scenario"
+	"github.com/asitha-w/warden/internal/setup"
 	"github.com/asitha-w/warden/internal/store"
 	"github.com/asitha-w/warden/internal/world"
 )
@@ -26,20 +27,22 @@ type Server struct {
 	st    *store.Store
 	w     *world.World
 	orch  *agent.Orchestrator
+	setup *setup.Service
 	log   *slog.Logger
 	web   fs.FS
 	reset func()
 }
 
 // New builds the server. reset rebuilds the tenant from scratch.
-func New(st *store.Store, w *world.World, orch *agent.Orchestrator, web fs.FS, reset func(), log *slog.Logger) *Server {
-	return &Server{st: st, w: w, orch: orch, log: log, web: web, reset: reset}
+func New(st *store.Store, w *world.World, orch *agent.Orchestrator, su *setup.Service, web fs.FS, reset func(), log *slog.Logger) *Server {
+	return &Server{st: st, w: w, orch: orch, setup: su, log: log, web: web, reset: reset}
 }
 
 // Handler returns the routed handler.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/state", s.state)
+	mux.HandleFunc("GET /api/setup", s.setupState)
 	mux.HandleFunc("GET /api/events", s.events)
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("POST /api/logout", s.logout)
@@ -318,7 +321,7 @@ func (s *Server) deleteConnection(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				st.Cells = kept
-				syncProbe(st)
+				setup.SyncProbe(st)
 				return []store.Event{{Type: "connections", Data: st.Connections}, {Type: "cells", Data: st.Cells}, {Type: "probe", Data: st.Probe}, store.Activity(st, "run", "Connection "+c.Name+" removed with its cells.", "", false)}
 			}
 		}
@@ -331,32 +334,6 @@ func (s *Server) deleteConnection(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
-// syncProbe recomputes which cells can carry the probe and which have it.
-func syncProbe(st *domain.State) {
-	st.Probe.Expected = []string{}
-	st.Probe.Hosts = []string{}
-	waiting := false
-	for _, c := range st.Cells {
-		if c.ProbeCapable {
-			st.Probe.Expected = append(st.Probe.Expected, c.ID)
-		}
-		if c.HasProbe() {
-			st.Probe.Hosts = append(st.Probe.Hosts, c.ID)
-		}
-		if c.Channel == domain.ChannelWaiting {
-			waiting = true
-		}
-	}
-	switch {
-	case waiting:
-		st.Probe.Status = domain.ProbeWaiting
-	case len(st.Probe.Hosts) > 0:
-		st.Probe.Status = domain.ProbeOnline
-	default:
-		st.Probe.Status = domain.ProbeNone
-	}
-}
-
 // onboard turns catalogue entries of a connection into cells.
 func (s *Server) onboard(w http.ResponseWriter, r *http.Request) {
 	var in struct{ IDs []string }
@@ -364,35 +341,17 @@ func (s *Server) onboard(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
-	by := s.userName()
-	var errOut error
-	var added []string
-	s.st.Update(func(st *domain.State) []store.Event {
-		c := st.Connection(r.PathValue("id"))
-		if c == nil || c.Status != domain.ConnConnected {
-			errOut = errors.New("connection not found or not validated")
-			return nil
-		}
-		for _, id := range in.IDs {
-			cand := c.Candidate(id)
-			if cand == nil || !cand.Supported || st.Cell(id) != nil {
-				continue
-			}
-			st.Cells = append(st.Cells, domain.NewCell(c, cand))
-			added = append(added, id)
-		}
-		if len(added) == 0 {
-			errOut = errors.New("nothing to onboard: pick supported entries that are not cells yet")
-			return nil
-		}
-		syncProbe(st)
-		return []store.Event{{Type: "cells", Data: st.Cells}, {Type: "probe", Data: st.Probe}, store.Activity(st, "run", fmt.Sprintf("%s onboarded %s as cells through %s. Level 0: provider sensors and provider actions.", by, strings.Join(added, ", "), c.Name), "", false), store.Toast(fmt.Sprintf("%d cell(s) onboarded", len(added)))}
-	})
-	if errOut != nil {
-		writeErr(w, 409, errOut)
+	added, err := s.setup.Onboard(r.PathValue("id"), in.IDs, s.userName())
+	if err != nil {
+		writeErr(w, 409, err)
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "cells": added})
+}
+
+// setupState is the whole setup in one call: stage, connections, cells, next steps.
+func (s *Server) setupState(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, 200, s.setup.Overview())
 }
 
 // detachCell removes a cell from management. Its findings and runs stay as history.
@@ -418,7 +377,7 @@ func (s *Server) detachCell(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		st.Probe.Hosts = kept
-		syncProbe(st)
+		setup.SyncProbe(st)
 		if st.Probe.Status != domain.ProbeNone && len(st.Probe.Hosts) < len(st.Probe.Expected) {
 			st.Probe.Status = domain.ProbeWaiting
 		}
@@ -536,171 +495,31 @@ func (s *Server) grant(w http.ResponseWriter, r *http.Request) {
 	var in struct{ Tunnel bool }
 	_ = readJSON(r, &in)
 	id := r.PathValue("id")
-	if err := s.grantCell(id, in.Tunnel, s.userName()); err != nil {
+	g, err := s.setup.Grant(id, in.Tunnel, s.userName())
+	if err != nil {
 		writeErr(w, 409, err)
 		return
 	}
-	writeJSON(w, 202, map[string]any{"ok": true})
-}
-
-func (s *Server) grantCell(id string, tunnel bool, by string) error {
-	var err error
-	s.st.Update(func(st *domain.State) []store.Event {
-		c := st.Cell(id)
-		switch {
-		case c == nil:
-			err = errors.New("no such cell")
-		case c.IsCluster():
-			err = errors.New("a cluster takes API access, not the grant")
-		case c.Level >= domain.LevelGranted:
-			err = errors.New(id + " already has the grant")
-		case c.Channel == domain.ChannelWaiting:
-			err = errors.New(id + " is waiting for its grant to report back")
-		}
-		if err != nil {
-			return nil
-		}
-		c.Grant = &domain.Grant{Token: fmt.Sprintf("bgt_%06x%06x", rand.Intn(0xffffff), rand.Intn(0xffffff)), IssuedAt: time.Now(), Tunnel: tunnel}
-		c.Channel = domain.ChannelWaiting
-		syncProbe(st)
-		return []store.Event{{Type: "cells", Data: st.Cells}, {Type: "probe", Data: st.Probe}, store.Activity(st, "run", fmt.Sprintf("%s issued the Warden grant for %s (%s). Waiting for the grant to report back.", by, id, map[bool]string{true: "reverse tunnel", false: "SSH 22 from the egress address"}[tunnel]), "", false)}
-	})
-	if err != nil {
-		return err
-	}
-	go func() {
-		time.Sleep(2500 * time.Millisecond)
-		s.st.Update(func(st *domain.State) []store.Event {
-			c := st.Cell(id)
-			if c == nil || c.Grant == nil || c.Level >= domain.LevelGranted {
-				return nil
-			}
-			now := time.Now()
-			c.Grant.HostKey = fmt.Sprintf("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI%06x…", rand.Intn(0xffffff))
-			c.Grant.InstalledAt = &now
-			c.Level = domain.LevelGranted
-			c.Hands = domain.HandsSSH
-			if c.Grant.Tunnel {
-				c.Hands = domain.HandsTunnel
-			}
-			c.Channel = domain.ChannelOnline
-			syncProbe(st)
-			return []store.Event{{Type: "cells", Data: st.Cells}, {Type: "probe", Data: st.Probe}, store.Activity(st, "signal", fmt.Sprintf("Grant on %s reported back: host key pinned, instance identity matches the provider, probe dialled in over OpAMP. %s. Hands: %s.", id, c.LevelName(), map[string]string{domain.HandsSSH: "SSH from the egress address, Ansible catalogue", domain.HandsTunnel: "SSH through the reverse tunnel, Ansible catalogue"}[c.Hands]), "", false), store.Toast(id + " is at Level 1")}
-		})
-	}()
-	return nil
+	writeJSON(w, 202, map[string]any{"ok": true, "token": g.Token})
 }
 
 // apiAccess raises a cluster cell to Level 1: the kube identity and the
 // network path, done by Warden through the connection.
 func (s *Server) apiAccess(w http.ResponseWriter, r *http.Request) {
-	if err := s.apiAccessCell(r.PathValue("id"), s.userName()); err != nil {
+	if err := s.setup.APIAccess(r.PathValue("id"), s.userName()); err != nil {
 		writeErr(w, 409, err)
 		return
 	}
 	writeJSON(w, 202, map[string]any{"ok": true})
-}
-
-func (s *Server) apiAccessCell(id, by string) error {
-	var err error
-	var provider string
-	s.st.Update(func(st *domain.State) []store.Event {
-		c := st.Cell(id)
-		switch {
-		case c == nil:
-			err = errors.New("no such cell")
-		case !c.IsCluster():
-			err = errors.New("a VM takes the grant, not API access")
-		case c.Level >= domain.LevelAPI:
-			err = errors.New(id + " already has API access")
-		case c.Channel == domain.ChannelWaiting:
-			err = errors.New(id + " is already being raised")
-		}
-		if err != nil {
-			return nil
-		}
-		provider = c.Provider
-		c.Channel = domain.ChannelWaiting
-		syncProbe(st)
-		text := fmt.Sprintf("%s enabled API access on %s: checking the role assignments and appending the egress address to the authorized IP ranges.", by, id)
-		if provider == "upcloud" {
-			text = fmt.Sprintf("%s enabled API access on %s: appending the egress address to the control plane IP filter, fetching the admin kubeconfig once, creating the warden-read and warden-write ServiceAccounts.", by, id)
-		}
-		return []store.Event{{Type: "cells", Data: st.Cells}, {Type: "probe", Data: st.Probe}, store.Activity(st, "run", text, "", false)}
-	})
-	if err != nil {
-		return err
-	}
-	go func() {
-		time.Sleep(2200 * time.Millisecond)
-		s.st.Update(func(st *domain.State) []store.Event {
-			c := st.Cell(id)
-			if c == nil || c.Level >= domain.LevelAPI {
-				return nil
-			}
-			c.Level = domain.LevelAPI
-			c.Hands = domain.HandsKubeAPI
-			c.Channel = domain.ChannelConnected
-			syncProbe(st)
-			text := fmt.Sprintf("%s: Entra token exchanged, nodes and namespaces listed. %s. Hands: Kubernetes API in the permitted namespaces.", id, c.LevelName())
-			if provider == "upcloud" {
-				text = fmt.Sprintf("%s: IP filter updated, ServiceAccount tokens stored, admin kubeconfig discarded (fetched %s; rotation is through UpCloud support). %s. Hands: Kubernetes API in the permitted namespaces.", id, time.Now().Format("15:04"), c.LevelName())
-			}
-			return []store.Event{{Type: "cells", Data: st.Cells}, {Type: "probe", Data: st.Probe}, store.Activity(st, "signal", text, "", false), store.Toast(id + " is at Level 1")}
-		})
-	}()
-	return nil
 }
 
 // cellProbe installs the probe on a cluster at Level 1, raising it to Level 2.
 func (s *Server) cellProbe(w http.ResponseWriter, r *http.Request) {
-	if err := s.probeCell(r.PathValue("id"), s.userName()); err != nil {
+	if err := s.setup.Probe(r.PathValue("id"), s.userName()); err != nil {
 		writeErr(w, 409, err)
 		return
 	}
 	writeJSON(w, 202, map[string]any{"ok": true})
-}
-
-func (s *Server) probeCell(id, by string) error {
-	var err error
-	s.st.Update(func(st *domain.State) []store.Event {
-		c := st.Cell(id)
-		switch {
-		case c == nil:
-			err = errors.New("no such cell")
-		case !c.IsCluster():
-			err = errors.New("on a VM the grant installs the probe")
-		case c.Level < domain.LevelAPI:
-			err = errors.New(id + " needs API access (Level 1) before the probe")
-		case c.HasProbe():
-			err = errors.New(id + " already has the probe")
-		case c.Channel == domain.ChannelWaiting:
-			err = errors.New(id + " is already being raised")
-		}
-		if err != nil {
-			return nil
-		}
-		c.Channel = domain.ChannelWaiting
-		syncProbe(st)
-		return []store.Event{{Type: "cells", Data: st.Cells}, {Type: "probe", Data: st.Probe}, store.Activity(st, "run", fmt.Sprintf("%s applied the probe manifest on %s: namespace warden-system, DaemonSet and cluster collector. Waiting for the collectors to dial in.", by, id), "", false)}
-	})
-	if err != nil {
-		return err
-	}
-	go func() {
-		time.Sleep(2500 * time.Millisecond)
-		s.st.Update(func(st *domain.State) []store.Event {
-			c := st.Cell(id)
-			if c == nil || c.HasProbe() {
-				return nil
-			}
-			c.Level = domain.LevelProbe
-			c.Channel = domain.ChannelOnline
-			syncProbe(st)
-			return []store.Event{{Type: "cells", Data: st.Cells}, {Type: "probe", Data: st.Probe}, store.Activity(st, "signal", fmt.Sprintf("Probe on %s dialled in over OpAMP from every node. %s.", id, c.LevelName()), "", false), store.Toast(id + " is at Level 2")}
-		})
-	}()
-	return nil
 }
 
 // raiseAll is the demo shortcut: every cell goes to its highest level, one
@@ -732,13 +551,13 @@ func (s *Server) raiseAll(w http.ResponseWriter, _ *http.Request) {
 			})
 			switch {
 			case !cluster:
-				_ = s.grantCell(id, false, by)
+				_, _ = s.setup.Grant(id, false, by)
 			case level < domain.LevelAPI:
-				_ = s.apiAccessCell(id, by)
+				_ = s.setup.APIAccess(id, by)
 				time.Sleep(2600 * time.Millisecond)
-				_ = s.probeCell(id, by)
+				_ = s.setup.Probe(id, by)
 			default:
-				_ = s.probeCell(id, by)
+				_ = s.setup.Probe(id, by)
 			}
 		}
 	}()

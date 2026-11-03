@@ -95,7 +95,33 @@ func (s *Scripted) stream(ctx context.Context, tb *Toolbox, text string) {
 func (s *Scripted) Chat(ctx context.Context, req ChatRequest, onDelta func(string)) (string, error) {
 	q := strings.ToLower(req.Question)
 	answer := ""
+	how := strings.Contains(q, "how ")
+	withState := func(lead string) string {
+		out, _ := req.Call(ctx, "get_setup_state", map[string]any{})
+		return lead + "\n" + out
+	}
 	switch {
+	case req.Call != nil && !how && strings.Contains(q, "onboard"):
+		out, err := req.Call(ctx, "onboard_cells", map[string]any{})
+		if err != nil || strings.HasPrefix(out, "no connection") || strings.HasPrefix(out, "nothing to onboard") || strings.HasPrefix(out, "say which") {
+			answer = out
+		} else {
+			answer = withState(out + " Here is where setup stands now.")
+		}
+	case req.Call != nil && !how && strings.Contains(q, "grant") && resourceIn(q) != "":
+		out, _ := req.Call(ctx, "issue_grant", map[string]any{"cell": resourceIn(q), "tunnel": strings.Contains(q, "tunnel")})
+		answer = out
+	case req.Call != nil && !how && strings.Contains(q, "api access") && resourceIn(q) != "":
+		out, _ := req.Call(ctx, "enable_api_access", map[string]any{"cell": resourceIn(q)})
+		answer = out
+	case req.Call != nil && !how && strings.Contains(q, "probe") && resourceIn(q) != "":
+		out, _ := req.Call(ctx, "install_probe", map[string]any{"cell": resourceIn(q)})
+		answer = out
+	case req.Call != nil && !how && (strings.Contains(q, "catalogue") || strings.Contains(q, "catalog") || strings.Contains(q, "discover")):
+		out, _ := req.Call(ctx, "list_catalogue", map[string]any{})
+		answer = "This is what the connection found:\n" + out
+	case req.Call != nil && !how && (strings.Contains(q, "found") || strings.Contains(q, "find") || strings.Contains(q, "next") || strings.Contains(q, "set up") || strings.Contains(q, "setup") || strings.Contains(q, "what is there") || strings.Contains(q, "what's there") || strings.Contains(q, "what can you") || strings.Contains(q, "where are we")):
+		answer = withState("Here is where setup stands.")
 	case req.Call != nil && (strings.Contains(q, "investigate") || strings.Contains(q, "look into") || strings.Contains(q, "check")) && resourceIn(q) != "":
 		res := resourceIn(q)
 		out, _ := req.Call(ctx, "start_investigation", map[string]any{"resource": res, "task": req.Question})
@@ -117,7 +143,7 @@ func (s *Scripted) Chat(ctx context.Context, req ChatRequest, onDelta func(strin
 	case strings.Contains(q, "cost") || strings.Contains(q, "token"):
 		answer = "Usage per agent and per run is on the Agents and Consumption pages. Deterministic agents, the remediator and the verifier, cost nothing."
 	default:
-		answer = "I am running in scripted mode without a model. I can list findings, describe a resource (name it, for example web-01), or start an investigation if you ask me to check a resource."
+		answer = "I am running in scripted mode without a model. I can tell you what setup found and what is next, onboard what a connection found, issue the grant for a VM, enable API access or install the probe on a cluster, list findings, describe a resource (name it, for example web-01), or start an investigation if you ask me to check a resource."
 	}
 	if onDelta != nil {
 		for i, w := range strings.Fields(answer) {
@@ -132,7 +158,7 @@ func (s *Scripted) Chat(ctx context.Context, req ChatRequest, onDelta func(strin
 }
 
 func resourceIn(q string) string {
-	for _, r := range []string{"web-01", "aks-shop", "edge-01", "db-01", "la-shop"} {
+	for _, r := range []string{"web-01", "aks-shop", "edge-01", "db-01", "la-shop", "vm-staging-01", "uks-edge"} {
 		if strings.Contains(q, r) {
 			return r
 		}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/asitha-w/warden/internal/domain"
+	"github.com/asitha-w/warden/internal/setup"
 	"github.com/asitha-w/warden/internal/store"
 	"github.com/asitha-w/warden/internal/world"
 	"github.com/asitha-w/warden/web"
@@ -24,6 +25,7 @@ type Orchestrator struct {
 	w        *world.World
 	gate     *Gate
 	reasoner Reasoner
+	setup    *setup.Service
 	log      *slog.Logger
 	model    string
 	tenant   func() string
@@ -34,8 +36,8 @@ type Orchestrator struct {
 }
 
 // NewOrchestrator wires the orchestrator.
-func NewOrchestrator(st *store.Store, w *world.World, gate *Gate, r Reasoner, model string, log *slog.Logger) *Orchestrator {
-	return &Orchestrator{st: st, w: w, gate: gate, reasoner: r, log: log, model: model, cancels: map[string]context.CancelFunc{}}
+func NewOrchestrator(st *store.Store, w *world.World, gate *Gate, r Reasoner, su *setup.Service, model string, log *slog.Logger) *Orchestrator {
+	return &Orchestrator{st: st, w: w, gate: gate, reasoner: r, setup: su, log: log, model: model, cancels: map[string]context.CancelFunc{}}
 }
 
 // Signal is what the signal loop hands over when a responder matches.
@@ -245,6 +247,22 @@ func (o *Orchestrator) Decide(approvalID string, approve bool, by string) error 
 	if errOut != nil {
 		return errOut
 	}
+	var ap domain.Approval
+	o.st.View(func(s *domain.State) {
+		if a := s.Approval(approvalID); a != nil {
+			ap = *a
+		}
+	})
+	if ap.RunID == "" {
+		if !approve {
+			return nil
+		}
+		ok, err := o.runSetupApproval(&ap, by)
+		if !ok {
+			return fmt.Errorf("approval %s is not bound to a run or a setup action", approvalID)
+		}
+		return err
+	}
 	if !o.gate.Decide(approvalID, approve, by) {
 		return fmt.Errorf("no run is waiting on %s", approvalID)
 	}
@@ -312,7 +330,9 @@ const orchestratorSystem = `You are Warden's orchestrator for one customer tenan
 
 Use tools to answer from current state rather than guessing. When the operator asks you to check, investigate or look into a resource, call start_investigation with a clear task. Answer in at most three short sentences, plainly, and say what you started and where to watch it. Never invent findings, resources or numbers.
 
-You also guide setup. Warden's documentation is available through read_docs; its pages are: model (cells, levels of reach, autonomy, what never happens), azure (the connection, VM Level 0 and 1, AKS Level 0, 1 and 2, step by step), upcloud (the connection, server Level 0 and 1, UKS Level 0, 1 and 2), grant (what the one-line grant installs, SSH certificates, the reverse tunnel), probe (what it collects and sends, failure behaviour), security (what runs on the customer's side, network, identities, audit, revocation), howto (links into every section). When the operator asks how to connect, onboard, grant, install, reach a private cluster, open a port, revoke access, or what Warden needs, read the matching page first and answer from it with the exact steps, roles and commands it gives; then point them to the page as #docs/<page>. Never guess a permission name; if the page does not state it, say so.`
+You also guide setup. Warden's documentation is available through read_docs; its pages are: model (cells, levels of reach, autonomy, what never happens), azure (the connection, VM Level 0 and 1, AKS Level 0, 1 and 2, step by step), upcloud (the connection, server Level 0 and 1, UKS Level 0, 1 and 2), grant (what the one-line grant installs, SSH certificates, the reverse tunnel), probe (what it collects and sends, failure behaviour), security (what runs on the customer's side, network, identities, audit, revocation), howto (links into every section). When the operator asks how to connect, onboard, grant, install, reach a private cluster, open a port, revoke access, or what Warden needs, read the matching page first and answer from it with the exact steps, roles and commands it gives; then point them to the page as #docs/<page>. Never guess a permission name; if the page does not state it, say so.
+
+You also run setup, so the operator never configures Warden by hand. The flow is: the operator creates the tenant and adds a cloud provider credential in a form (never through you: you never take a secret); from there you take over. On any question about what exists, what you can see, or what to do next, call get_setup_state first and answer from it. Say plainly what each connection found and which of it you can manage, then onboard it with onboard_cells unless the operator says otherwise. For each cell say what you can already see and do at its level and what the next level would add. For a VM, issue_grant and give the operator the exact line to run on the host; do not paraphrase the line. For a cluster, enable_api_access and then install_probe each open an approval because they change the customer's cluster: say the approval id and that you will carry on once it is approved. After every setup action call get_setup_state again and tell the operator the one next thing. Keep to the three sentences unless you are handing over a command, then put the command on its own line.`
 
 // Chat handles one operator message to the orchestrator.
 func (o *Orchestrator) Chat(ctx context.Context, question, by string) error {
@@ -396,13 +416,14 @@ func (o *Orchestrator) Chat(ctx context.Context, question, by string) error {
 // OrchestratorTools are the tools the orchestrator may use in chat.
 func OrchestratorTools() []ToolDef {
 	res := map[string]any{"type": "string", "description": "Cell id, for example web-01, aks-shop, edge-01"}
-	return []ToolDef{
+	defs := []ToolDef{
 		{Name: "list_findings", Description: "List the tenant's findings with status, severity, resource and run id.", Schema: map[string]any{}},
 		{Name: "list_runs", Description: "List agent runs with agent, status, outcome and cost.", Schema: map[string]any{}},
 		{Name: "get_resource_state", Description: "Provider state, health and services with versions for a resource, plus its current key metrics.", Schema: map[string]any{"resource": res}, Required: []string{"resource"}},
 		{Name: "start_investigation", Description: "Start the investigator on a cell with a task. Returns the run id. Use when the operator asks to check, investigate or fix something.", Schema: map[string]any{"resource": res, "task": map[string]any{"type": "string", "description": "What to investigate, in one sentence"}}, Required: []string{"resource", "task"}},
 		{Name: "read_docs", Description: "Read one page of Warden's documentation as Markdown. Pages: model, azure, upcloud, grant, probe, security, howto. Use before answering any question about setting up, connecting, granting, installing or revoking.", Schema: map[string]any{"page": map[string]any{"type": "string", "enum": DocPages()}}, Required: []string{"page"}},
 	}
+	return append(defs, SetupTools()...)
 }
 
 // DocPages lists the documentation pages embedded with the console.
@@ -473,7 +494,7 @@ func (o *Orchestrator) orchestratorTool(name string, in map[string]any, by strin
 		}
 		return fmt.Sprintf("Started run %s on %s. Watch it under Investigations.", id, str(in, "resource")), nil
 	}
-	return "", fmt.Errorf("unknown tool %q", name)
+	return o.setupTool(name, in, by)
 }
 
 func (o *Orchestrator) contextText(s *domain.State) string {
@@ -491,7 +512,7 @@ func (o *Orchestrator) contextText(s *domain.State) string {
 			open++
 		}
 	}
-	fmt.Fprintf(&b, "Open findings: %d. Pending approvals: %d. Documentation pages: %s (read_docs).", open, pendingApprovals(s), strings.Join(DocPages(), ", "))
+	fmt.Fprintf(&b, "Open findings: %d. Pending approvals: %d. Setup stage: %s (get_setup_state has the detail). Documentation pages: %s (read_docs).", open, pendingApprovals(s), setup.Compute(s).Stage, strings.Join(DocPages(), ", "))
 	return b.String()
 }
 

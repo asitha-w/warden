@@ -10,8 +10,8 @@ Rules that carry over: the orchestrator guides, it does not own state; the overl
 
 Build order agreed on 2026-11-03:
 
-1. Setup tools for the orchestrator: validate connection, list catalogue, onboard cells, mint the grant token, request API access, check level. These wrap the existing `/api` endpoints behind the policy gate.
-2. A setup-state endpoint the orchestrator reads in one call: tenant, connections, cells with level and the next step for each.
+1. Done 2026-11-03. `internal/setup` holds onboarding, grant, API access and probe once; `internal/agent/setup_tools.go` gives the orchestrator six setup tools behind a fixed policy table (onboard and grant allow; API access and probe ask, and `Decide` runs the approved action). The scripted reasoner answers "what did you find", "onboard everything", "grant web-01", "enable api access on aks-shop", "install the probe on aks-shop" without a model.
+2. Done 2026-11-03. `GET /api/setup` returns the overview: stage (tenant, connection, onboard, reach, ready), connections with found and onboarded counts, cells with level and next step, and the ordered next steps with who does each (operator, warden, both) and the tool that does it.
 3. The new console: the overlay with three bands and the chat beside it, built from the existing design system, chat, cell cards and docs renderer. The old pages stay reachable until the new flow covers them.
 4. Re-record the walkthrough from the three-step flow.
 

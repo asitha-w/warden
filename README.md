@@ -1,6 +1,6 @@
 # Warden
 
-Agentic reliability operations for teams on Azure and UpCloud without a full-time SRE. Warden is the agent that tends the estate and talks to you. Setup is three steps: create a tenant, give it a cloud credential, and from there the orchestrator takes over. It tells you what it found, what it can already see and do, and hands you the one thing to run when it needs more reach. There is no setup to learn.
+Agentic reliability operations for teams on Azure and UpCloud without a full-time SRE. Warden is the agent that tends the estate and talks to you. Setup is three steps: create a tenant, give it a cloud credential, and from there the orchestrator takes over. It has six setup tools (`get_setup_state`, `list_catalogue`, `onboard_cells`, `issue_grant`, `enable_api_access`, `install_probe`) behind a fixed policy table: onboarding and the grant run at once because they change nothing on your side until you act; API access and the probe change your cluster, so each opens an approval and runs when you approve it. It tells you what it found, what it can already see and do, and hands you the one thing to run when it needs more reach. There is no setup to learn.
 
 Warden started on 2026-11-03 from the Beacon codebase (the Go service, the agent loop, the cell model, the design system and the documentation). Beacon stays as the hand-configured console; Warden is the agent-led one. The planning notes under `docs/planning/` were written for Beacon and still hold.
 
@@ -11,6 +11,7 @@ Warden started on 2026-11-03 from the Beacon codebase (the Go service, the agent
 | `cmd/warden` | The binary: API, event stream, embedded console, signal loop, orchestrator. |
 | `internal/domain` | Entities the console shows and the agents act on. No dependencies. |
 | `internal/store` | In-memory system of record for one tenant plus the event bus. |
+| `internal/setup` | Raises a tenant from a credential to a managed estate: onboarding, the grant, API access, the probe, and the setup overview (`GET /api/setup`). The API handlers and the orchestrator's setup tools both call it. |
 | `internal/world` | Simulated estate: hosts, metric streams, services with versions, logs, files, activity. |
 | `internal/scenario` | The faults the demo injects and the scripted playbook for each. |
 | `internal/signal` | Deterministic signal loop: ticks the world, evaluates responder rules, verifies fixes. |
