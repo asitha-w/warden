@@ -108,55 +108,80 @@ class Demo:
         self.pause(s)
 
 
+def wait_for_warden(d: Demo, text, timeout=25):
+    # wait until the orchestrator's latest message contains the text, then read it
+    loc = d.page.locator("#home-thread .orchtext").last
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if text.lower() in loc.inner_text(timeout=1000).lower():
+                break
+        except Exception:
+            pass
+        time.sleep(0.4)
+    d.hover_read(loc, 2.5)
+
+
+def ask(d: Demo, text, wait=None, pause=3):
+    d.type(d.page.locator("#home-input"), text)
+    d.page.keyboard.press("Enter")
+    if wait:
+        wait_for_warden(d, wait)
+    d.pause(pause)
+
+
+def approve_when_asked(d: Demo, wait_text):
+    wait_for_warden(d, "Approval")
+    d.click(d.page.locator(".band-approval").get_by_role("button", name="Approve"), pause=1)
+    wait_for_warden(d, wait_text)
+
+
 def part1(d: Demo):
-    d.title("Onboarding", "Part 1 of 4 · sign in, tenant, connections, cells, probes, agents")
+    d.title("Three steps", "Part 1 of 4 · sign in, create the tenant, add a credential; Warden takes over")
     d.go("login")
     d.type(d.page.get_by_placeholder("you@company.example"), "asitha@shop.example")
     d.type(d.page.get_by_placeholder("Password"), "demo-password", delay=30)
     d.click(d.button("Sign in"), pause=2)
     d.hover_read(d.page.get_by_text("The tenant gets its own runtime"), 2)
-    d.click(d.button("Create tenant"), pause=2.5)
-    # the console points at the next step: a connection
-    d.hover_read(d.page.get_by_text("Start by creating a connection").first, 2.5)
-    d.click(d.button("Go to connections"), pause=2)
-    # UpCloud first: sub-account, token, grants
-    d.click(d.button("Add UpCloud"), pause=1.5)
-    d.hover_read(d.page.get_by_text("Restrict the sub-account to the servers"), 2)
-    d.click(d.button("Validate token"), pause=3)
-    # Azure: directory, identity, read scope, write scope
-    d.click(d.button("Add Azure"), pause=1.5)
+    d.click(d.button("Create tenant"), pause=1)
+    # Warden speaks first
+    wait_for_warden(d, "I am Warden")
+    d.hover_read(d.page.locator(".panel-next"), 2.5)
+    # the credential is the only form: Azure first
+    d.click(d.button("Add Azure credential"), pause=1.5)
     d.hover_read(d.page.get_by_text("Consent creates a service principal"), 2.2)
-    d.scroll(380, 1.5)
-    d.hover_read(d.page.get_by_text("Reader roles are assigned here"), 2.2)
-    d.hover_read(d.page.get_by_text("Contributor roles are assigned here"), 2.2)
-    d.click(d.button("Consent and validate"), pause=3.5)
-    d.scroll(-900, 1.5)
-    # discovery: what each connection found, what is manageable, then onboard
-    d.hover_read(d.page.get_by_text("Discovered in scope").first, 2.5)
-    d.hover_read(d.page.get_by_text("not supported yet").first, 2.2)
-    d.click(d.button("Onboard selected as cells").first, pause=2.5)
-    d.click(d.button("Onboard selected as cells").first, pause=2.5)
-    # the next step moves to cells: install the probe
-    d.go("cells", 2.5)
-    d.hover_read(d.page.get_by_text("can be raised").first, 2.5)
-    d.click(d.button("Raise all cells (demo)"), pause=2)
-    d.pause(14)
-    d.hover_read(d.page.get_by_text("one isolated channel per cell"), 3)
-    d.hover_read(d.page.get_by_text("identity shared with").first, 2.5)
-    d.hover_read(d.page.get_by_text("dedicated identity").first, 2.5)
-    # one cell in depth: provider sensors and probe telemetry
-    d.click(d.page.locator("tr.row").first, pause=2.5)
-    d.hover_read(d.page.get_by_text("Provider sensors"), 3)
-    d.hover_read(d.page.get_by_text("Probe telemetry"), 3)
-    d.hover_read(d.page.get_by_text("/var/log/nginx/access.log"), 2.5)
-    d.click(d.page.get_by_text("Collector config the probe receives"), pause=3)
+    d.click(d.button("Test and save connection"), pause=1)
+    wait_for_warden(d, "Your connection is validated")
+    d.hover_read(d.page.locator(".band.hot").first, 2)
+    ask(d, "onboard everything", wait="Next: grant")
+    d.hover_read(d.page.locator(".band").filter(has_text="Cells"), 2)
+    # a VM: Warden issues the grant and hands over the line
+    ask(d, "grant web-01", wait="Grant issued")
+    d.hover_read(d.page.locator("#home-thread .codewrap").last, 3)
+    wait_for_warden(d, "reported back")
+    # a cluster: changes the customer's side, so Warden asks first
+    d.click(d.button("Ask Warden for API access"), pause=1)
+    approve_when_asked(d, "has API access")
+    d.click(d.button("Ask Warden to install the probe"), pause=1)
+    approve_when_asked(d, "Level 2")
+    # UpCloud: the second provider, the same three steps
+    d.click(d.button("Add UpCloud token"), pause=1.5)
+    d.hover_read(d.page.get_by_text("Restrict the sub-account to the servers"), 2)
+    d.click(d.button("Test and save connection"), pause=1)
+    wait_for_warden(d, "Your connection is validated")
+    d.click(d.button("Ask Warden to onboard"), pause=1)
+    wait_for_warden(d, "Onboarded")
+    ask(d, "grant edge-01", wait="Grant issued", pause=1)
+    wait_for_warden(d, "reported back")
+    d.click(d.button("Ask Warden for API access"), pause=1)
+    approve_when_asked(d, "has API access")
+    d.click(d.button("Ask Warden to install the probe"), pause=1)
+    approve_when_asked(d, "nothing left")
+    d.hover_read(d.page.locator(".panel-head"), 3)
+    # what the agents are
     d.go("agents", 2.5)
     d.hover_read(d.page.get_by_text("Orchestrator", exact=True).first, 2)
     d.hover_read(d.page.get_by_text("Investigator", exact=True).first, 2)
-    d.scroll(600, 2)
-    d.hover_read(d.page.get_by_text("Cost advisor", exact=True).first, 1.5)
-    card = d.page.locator(".agent-card").filter(has_text="Cost advisor")
-    d.click(card.locator("input[type=checkbox]"), pause=2.5)
 
 
 def part2(d: Demo):
@@ -211,17 +236,14 @@ def part3(d: Demo):
 
 def part4(d: Demo):
     d.title("Working with the agents", "Part 4 of 4 · the operator and the orchestrator resolve an outage")
-    d.go("chat", 2)
+    d.go("warden", 2)
     d.click(d.button("Crash nginx on edge-01"), pause=1)
-    d.go("chat", 2)
+    d.go("warden", 2)
     d.pause(5)
-    d.type(d.page.locator("#chat-input"), "customers say the edge is down, what is open?")
-    d.page.keyboard.press("Enter")
-    d.pause(5)
-    d.type(d.page.locator("#chat-input"), "why is edge-01 failing?")
-    d.page.keyboard.press("Enter")
-    d.pause(6)
-    d.click(d.button("Open approval").first, pause=3)
+    ask(d, "customers say the edge is down, what is open?", pause=4)
+    ask(d, "why is edge-01 failing?", pause=6)
+    d.go("findings", 2.5)
+    d.click(d.page.locator("tr.row").first, pause=3)
     d.scroll(900, 3)
     d.scroll(900, 2)
     d.type(d.page.locator("#ask-input"), "is restarting nginx safe right now, any downtime?")
