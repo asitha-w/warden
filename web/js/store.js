@@ -38,6 +38,7 @@ export function apply(ev) {
     case 'activity': s.activity.unshift(ev.data); if (s.activity.length > 60) s.activity.length = 60; return 'full';
     case 'usage': s.usage = ev.data; return 'full';
     case 'chat': upsert(s.chat, ev.data); return 'full';
+    case 'chat.clear': s.chat = []; return 'full';
     case 'chat.insert': { const i = s.chat.findIndex((x) => x.id === ev.data.before); if (i >= 0) s.chat.splice(i, 0, ev.data.message); else s.chat.push(ev.data.message); return 'full'; }
     case 'chat.delta': {
       const m = s.chat.find((x) => x.id === ev.data.messageId);

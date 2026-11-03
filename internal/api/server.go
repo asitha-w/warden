@@ -63,6 +63,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/cells/{id}/probe", s.cellProbe)
 	mux.HandleFunc("POST /api/approvals/{id}", s.decide)
 	mux.HandleFunc("POST /api/chat", s.chat)
+	mux.HandleFunc("POST /api/chat/new", s.newSession)
 	mux.HandleFunc("POST /api/runs/{id}/ask", s.ask)
 	mux.HandleFunc("POST /api/responders/{id}", s.responder)
 	mux.HandleFunc("POST /api/agents/{id}", s.agentUpdate)
@@ -637,6 +638,13 @@ func (s *Server) userName() string {
 		}
 	})
 	return by
+}
+
+// newSession clears the thread and keeps everything else: the estate stays,
+// the conversation starts fresh.
+func (s *Server) newSession(w http.ResponseWriter, _ *http.Request) {
+	s.orch.NewSession()
+	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
 func (s *Server) chat(w http.ResponseWriter, r *http.Request) {

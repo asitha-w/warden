@@ -34,6 +34,9 @@ func NewScripted(st *store.Store, pace time.Duration, model string) *Scripted {
 // Name implements Reasoner.
 func (s *Scripted) Name() string { return "scripted" }
 
+// Forget drops anything the scripted reasoner was waiting on; a new session.
+func (s *Scripted) Forget() { s.pending = struct{ kind, cell string }{} }
+
 // responderScenario maps a responder to the playbook that handles it.
 var responderScenario = map[string]string{
 	"disk-pressure-linux": "disk-fill",

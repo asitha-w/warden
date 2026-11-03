@@ -348,6 +348,19 @@ func (o *Orchestrator) Chat(ctx context.Context, question, by string) error {
 	return o.turn(ctx, question, by, true)
 }
 
+// NewSession clears the thread. The estate, runbooks, watches and agents stay.
+func (o *Orchestrator) NewSession() {
+	o.chatMu.Lock()
+	defer o.chatMu.Unlock()
+	if r, ok := o.reasoner.(interface{ Forget() }); ok {
+		r.Forget()
+	}
+	o.st.Update(func(s *domain.State) []store.Event {
+		s.Chat = []*domain.ChatMessage{}
+		return []store.Event{{Type: "chat.clear", Data: nil}}
+	})
+}
+
 // Announce makes the orchestrator speak first: the prompt is not shown in the
 // thread, only the answer. Used when the tenant is created, when a
 // connection validates and when a cell reaches a new level, so the operator

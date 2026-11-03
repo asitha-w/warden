@@ -146,8 +146,22 @@ def wait_resolved(d: Demo, timeout=90):
         time.sleep(1)
 
 
-def part1(d: Demo):
-    d.title("Three steps", "Part 1 of 4 · sign in, create the tenant, name your provider; Warden takes it from there")
+MARKS = []  # (name, seconds from the start of the recording)
+T0 = [None]
+
+
+def mark(name):
+    MARKS.append((name, time.time() - T0[0]))
+
+
+def new_session(d: Demo):
+    d.go("warden", 1.5)
+    d.click(d.button("New session"), pause=1.5)
+
+
+def step1(d: Demo):
+    mark("1-connect")
+    d.title("Step 1 · Connect", "sign in, create the tenant, name your provider; Warden connects the cells")
     d.go("login")
     d.type(d.page.get_by_placeholder("you@company.example"), "asitha@shop.example")
     d.type(d.page.get_by_placeholder("Password"), "demo-password", delay=30)
@@ -165,7 +179,6 @@ def part1(d: Demo):
     ask(d, "grant edge-01", wait="Grant issued")
     d.hover_read(d.page.locator("#home-thread .codewrap").last, 3)
     wait_for_warden(d, "reported back")
-    # the cluster: each change to the customer's side asks first, in the panel
     d.click(d.button("Ask Warden for API access"), pause=1)
     wait_panel_approval(d)
     d.hover_read(d.page.locator(".band-approval").first, 2.5)
@@ -176,40 +189,56 @@ def part1(d: Demo):
     d.click(d.page.locator(".band-approval").get_by_role("button", name="Approve"), pause=1)
     wait_for_warden(d, "nothing left")
     d.hover_read(d.page.locator(".panel-head"), 2.5)
+    d.go("cells", 2.5)
+    d.hover_read(d.page.locator("tr.row").first, 2.5)
 
 
-def part2(d: Demo):
-    d.title("Teach Warden", "Part 2 of 4 · a runbook from your words, a watch, and a standing order")
+def step2(d: Demo):
+    mark("2-runbook")
+    d.title("Step 2 · Runbooks", "a fresh session: tell Warden about the app in your words")
+    new_session(d)
     ask(d, "add a runbook for edge-01", wait="Tell me in one message", pause=1)
     ask(d, "edge-01 runs nginx as a caching proxy in front of the shop. Restarting nginx is safe at any hour. Rotating the logs is safe. Never delete the cache under /var/cache/nginx. Page ops@shop.example for critical only.", wait="saved")
     d.hover_read(d.page.locator(".band").filter(has_text="Runbooks"), 2.5)
     d.go("runbooks", 2)
     d.hover_read(d.page.get_by_text("Applies when").first, 3)
-    d.scroll(400, 2)
-    d.go("warden", 2)
+    d.scroll(400, 2.5)
+
+
+def step3(d: Demo):
+    mark("3-watch")
+    d.title("Step 3 · A watch", "a fresh session: add a watch, see it running, then something happens")
+    new_session(d)
     ask(d, "watch the logs on edge-01 every 10 seconds and wake me on errors", wait="Created watch")
-    ask(d, "add disk space alerts for production, and if disk is low clean up the logs, already approved", wait="Created watch")
-    d.hover_read(d.page.locator(".band").filter(has_text="Watches"), 3)
-    d.hover_read(d.page.get_by_text("Standing order: rotate_logs").first, 3)
-
-
-def part3(d: Demo):
-    d.title("It happens", "Part 3 of 4 · a log fires a watch, Warden reacts; a standing order fixes the disk without asking")
+    d.go("watches", 2.5)
+    d.hover_read(d.page.get_by_text("Logs on edge-01", exact=True).first, 2.5)
+    d.hover_read(d.page.get_by_text("Running · every 10s").first, 2)
+    d.pause(6)
+    d.hover_read(d.page.get_by_text("Last run").first, 2.5)
+    d.go("warden", 1.5)
     d.click(d.button("Crash nginx on edge-01"), pause=1)
     wait_for_warden(d, "fired on edge-01")
-    d.hover_read(d.page.locator(".band").filter(has_text="Watches"), 2)
     wait_panel_approval(d)
     d.hover_read(d.page.locator(".band-approval").first, 3.5)
     d.click(d.page.locator(".band-approval").get_by_role("button", name="Approve fix"), pause=2)
     wait_resolved(d, 60)
     d.go("findings", 2.5)
     d.hover_read(d.page.locator("tr.row").first, 3)
-    d.go("warden", 2)
+
+
+def step4(d: Demo):
+    mark("4-standing-order")
+    d.title("Step 4 · A standing order", "a fresh session: pre-approve one action; Warden acts without asking")
+    new_session(d)
+    ask(d, "add disk space alerts for production, and if disk is low clean up the logs, already approved", wait="Created watch")
+    d.go("watches", 2.5)
+    d.hover_read(d.page.get_by_text("Standing order").first, 3)
+    d.go("warden", 1.5)
     d.click(d.button("Fill the disk on edge-01"), pause=1)
     wait_for_warden(d, "pre-approves rotate_logs", timeout=90)
     d.hover_read(d.page.locator("#home-thread .orchtext").last, 3)
     wait_resolved(d, 90)
-    d.pause(2)
+    d.pause(1.5)
     d.go("investigations", 2.5)
     d.click(d.page.locator("tr.row").first, pause=3)
     d.hover_read(d.page.get_by_text("standing order", exact=False).first, 3.5)
@@ -217,16 +246,16 @@ def part3(d: Demo):
     d.scroll(700, 3)
 
 
-def part4(d: Demo):
-    d.title("A specialist", "Part 4 of 4 · Warden adds an agent from a template; the responder starts it from now on")
-    d.go("warden", 2)
+def step5(d: Demo):
+    mark("5-specialist")
+    d.title("Step 5 · A specialist", "a fresh session: Warden adds an agent from a template")
+    new_session(d)
     ask(d, "add an nginx specialist for the edge servers", wait="Added")
     d.hover_read(d.page.locator(".band").filter(has_text="Agents"), 3)
     d.go("agents", 2.5)
     d.hover_read(d.page.get_by_text("nginx specialist", exact=True).first, 3)
-    d.go("consumption", 3)
-    d.hover_read(d.page.get_by_text("By agent"), 3)
     d.title("Warden", "the agent that tends the estate · prototype, scripted mode, no model", hold=3)
+    mark("end")
 
 
 def main():
@@ -255,8 +284,9 @@ def main():
             page = ctx.new_page()
             d = Demo(page)
             page.goto(f"{BASE}/#login")
+            T0[0] = time.time()
             d.pause(1.5)
-            part1(d); part2(d); part3(d); part4(d)
+            step1(d); step2(d); step3(d); step4(d); step5(d)
             video = page.video
             ctx.close()
             webm = Path(video.path())
@@ -264,6 +294,13 @@ def main():
         mp4 = OUT / "warden-walkthrough.mp4"
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(webm), "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(mp4)], check=True)
         print("wrote", mp4, mp4.stat().st_size // 1024, "KB")
+        # one clip per step, cut at the title cards
+        for i in range(len(MARKS) - 1):
+            name, start = MARKS[i]
+            _, end = MARKS[i + 1]
+            clip = OUT / f"warden-step-{name}.mp4"
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{start:.2f}", "-to", f"{end:.2f}", "-i", str(mp4), "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(clip)], check=True)
+            print("wrote", clip, f"{end - start:.0f}s")
     finally:
         os.killpg(os.getpgid(server.pid), signal.SIGTERM)
 

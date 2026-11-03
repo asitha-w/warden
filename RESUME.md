@@ -2,6 +2,10 @@
 
 Working folder and git repo for Warden. Private GitHub repo: https://github.com/asitha-w/warden (default branch `main`). Forked from Beacon on 2026-11-03 with the brand renamed throughout; the Beacon history (2026-10-29 to 2026-11-03) is in https://github.com/asitha-w/beacon.
 
+## Step-by-step demo, 2026-11-03 (night)
+
+Operator feedback: the home page jittered and the demo should be step by step in fresh sessions. Fixed: `render()` keeps the scroll position of every `[data-keep-scroll]` container across rebuilds (the thread stays pinned to its end, the panel keeps its place), streaming deltas re-pin the thread, and watch ticks redraw at most every 2.5 s. `POST /api/chat/new` (`Orchestrator.NewSession`) clears the thread and keeps the estate; the "New session" button sits beside Send. `#watches` is a page in the rail showing every watch running with cadence, scope, condition, trigger, standing order, last run and fired count. The recorder is five steps, each after "New session", and cuts one clip per step at the title cards; `docs/recordings/` has the full take and the five clips.
+
 ## Standing orders, 2026-11-03 (evening)
 
 Watches are the product word for workflows; a watch with a pre-approved catalogue action is a standing order (`Workflow.Allow`, carried on the run as `Run.Allowed` and lifting ask to allow in `Toolbox.Policy`; never run_command, never deny). Metric watches are data (`Metric`, `Op`, `Threshold`, `Hold`) evaluated per matching cell in `internal/signal`; the seeded disk and error-rate watches use that path. `rotate_logs` is a catalogue action across the toolbox, the world and the disk-fill playbook, and `disk-fill-edge` is the same fault on the UpCloud server for the demo. `start_responder` attaches a covering standing order whichever watch noticed first; a new log watch baselines on its first run. The recorder (`tools/record/record.py`) drives the whole line in the light theme: three steps, teach Warden, it happens, a specialist.

@@ -8,7 +8,7 @@ import { icon } from './icons.js';
 export const NAV = [
   ['warden', 'Warden', 'warden'], ['findings', 'Findings', 'activity'], ['investigations', 'Investigations', 'search'], ['approvals', 'Approvals', 'shield'],
   ['sep', 'Configure'],
-  ['cells', 'Cells', 'server'], ['connections', 'Connections', 'plug'], ['runbooks', 'Runbooks', 'book'], ['agents', 'Agents', 'bot'], ['responders', 'Responders', 'zap'], ['consumption', 'Consumption', 'gauge'],
+  ['cells', 'Cells', 'server'], ['connections', 'Connections', 'plug'], ['runbooks', 'Runbooks', 'book'], ['watches', 'Watches', 'activity'], ['agents', 'Agents', 'bot'], ['responders', 'Responders', 'zap'], ['consumption', 'Consumption', 'gauge'],
   ['sep', 'Help'],
   ['docs', 'Documentation', 'layers'],
 ];

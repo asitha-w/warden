@@ -27,6 +27,7 @@ export const api = {
   cellProbe: (id) => send('POST', `/api/cells/${id}/probe`),
   decide: (id, decision) => send('POST', `/api/approvals/${id}`, { decision }),
   chat: (question) => send('POST', '/api/chat', { question }),
+  newSession: () => send('POST', '/api/chat/new'),
   ask: (runId, question) => send('POST', `/api/runs/${runId}/ask`, { question }),
   responderMode: (id, mode) => send('POST', `/api/responders/${id}`, { mode }),
   agent: (id, patch) => send('POST', `/api/agents/${id}`, patch),

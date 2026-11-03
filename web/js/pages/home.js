@@ -38,12 +38,10 @@ function thread() {
     const body = isUser ? [el('p', { 'data-msg': m.id, text: m.text || '…' })] : [el('div', { 'data-msg': m.id, class: 'orchtext' }, m.text ? orchText(m.text) : [el('p', { text: '…' })])];
     return el('div', { class: 'msg' }, [el('div', { class: 'who ' + (isUser ? 'user' : 'orch'), text: isUser ? userName.slice(0, 1).toUpperCase() : 'W' }), el('div', { class: 'body2' }, [el('div', { class: 'meta' }, [el('b', { text: isUser ? userName : 'Warden' })]), ...body])]);
   });
-  const empty = el('div', { class: 'empty' }, [el('div', { class: 'heading', text: 'Warden speaks first' }), el('p', { class: 'sm muted', text: 'Add a cloud provider credential in the panel and Warden tells you what it found and what comes next.' })]);
+  const empty = el('div', { class: 'empty' }, [el('div', { class: 'heading', text: s.cells.length ? 'New session' : 'Warden speaks first' }), el('p', { class: 'sm muted', text: s.cells.length ? 'The estate is as you left it. Tell Warden what to do next: a runbook, a watch, a standing order, a specialist, or a question.' : 'Add a cloud provider credential in the panel and Warden tells you what it found and what comes next.' })]);
   const input = el('input', { id: 'home-input', placeholder: 'Ask Warden, or tell it what to do…', autocomplete: 'off' });
-  const form = el('form', { onSubmit: (e) => { e.preventDefault(); const q = input.value.trim(); if (!q) return; input.value = ''; say(q); } }, [el('div', { class: 'ask' }, [input, Button({ variant: 'primary', label: 'Send', type: 'submit' })])]);
-  const node = el('div', { class: 'card lg chat home-chat' }, [el('div', { class: 'thread', id: 'home-thread' }, items.length ? items : [empty]), form]);
-  requestAnimationFrame(() => { const t = document.getElementById('home-thread'); if (t) t.scrollTop = t.scrollHeight; });
-  return node;
+  const form = el('form', { onSubmit: (e) => { e.preventDefault(); const q = input.value.trim(); if (!q) return; input.value = ''; say(q); } }, [el('div', { class: 'ask' }, [input, Button({ variant: 'primary', label: 'Send', type: 'submit' }), Button({ label: 'New session', title: 'Clear the thread; the estate stays', onClick: () => api.newSession().catch((e) => toast(e.message)) })])]);
+  return el('div', { class: 'card lg chat home-chat' }, [el('div', { class: 'thread', id: 'home-thread', 'data-keep-scroll': 'end' }, items.length ? items : [empty]), form]);
 }
 
 // band is one of the three setup bands. hot marks the band with the next step.
@@ -122,7 +120,7 @@ function workflowsBand() {
   const s = store.state;
   const rows = (s.workflows || []).map((wf) => el('div', { class: 'band-row' + (wf.fired ? ' hot' : '') }, [
     el('div', { class: 'band-main' }, [
-      el('div', { class: 'bc-row' }, [el('b', { text: wf.name }), el('span', { class: 'bc-pill ' + (wf.enabled ? 'bc-pill-available' : 'bc-pill-none'), text: wf.enabled ? 'every ' + wf.every + 's' : 'paused' }), wf.fired ? el('span', { class: 'bc-pill bc-pill-missing', text: 'fired ' + wf.fired }) : null]),
+      el('div', { class: 'bc-row' }, [el('a', { href: '#watches', text: wf.name }), el('span', { class: 'bc-pill ' + (wf.enabled ? 'bc-pill-available' : 'bc-pill-none'), text: wf.enabled ? 'every ' + wf.every + 's' : 'paused' }), wf.fired ? el('span', { class: 'bc-pill bc-pill-missing', text: 'fired ' + wf.fired }) : null]),
       el('div', { class: 'sm muted', text: `${wf.collect} on ${Object.keys(wf.selector || {}).map((k) => k + '=' + wf.selector[k]).join(', ')} · ${wf.condition} · ${wf.trigger === 'wake-warden' ? 'wakes Warden' : 'starts ' + wf.trigger.replace('responder:', '')}` }),
       wf.allow && wf.allow.length ? el('div', { class: 'sm', style: 'color:var(--brand)', text: 'Standing order: ' + wf.allow.join(', ') + ' runs without asking' }) : null,
       wf.lastResult ? el('div', { class: 'sm muted mono', text: 'last: ' + wf.lastResult }) : null,
@@ -143,7 +141,7 @@ function rerender() { dispatchEvent(new HashChangeEvent('hashchange')); }
 export function pageHome() {
   const o = store.setup || { stage: 'tenant', next: [], connections: [], cells: [] };
   const first = o.next && o.next[0];
-  const panel = el('aside', { class: 'setup-panel', 'aria-label': 'Setup' }, [
+  const panel = el('aside', { class: 'setup-panel', id: 'home-panel', 'data-keep-scroll': 'top', 'aria-label': 'Setup' }, [
     el('div', { class: 'panel-head' }, [icon('warden'), el('span', { class: 'heading', text: o.stage === 'ready' ? 'Your estate' : 'Setup' }), el('span', { class: 'spacer' }), el('span', { class: 'badge', text: 'stage · ' + o.stage })]),
     first ? el('div', { class: 'panel-next' }, [el('span', { class: 'label', text: 'Next' }), el('div', { text: first.title }), el('div', { class: 'sm muted', text: first.who === 'operator' ? 'Yours to do.' : first.who === 'both' ? 'Warden prepares it, you run it.' : first.tool ? 'Warden does this; ask it or click the button.' : 'In progress.' })]) : null,
     approvalsBand(),

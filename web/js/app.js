@@ -16,6 +16,7 @@ import { pageCells, pageCell } from './pages/cells.js';
 import { pageApprovals, pageConnections, pageResponders, pageConsumption } from './pages/admin.js';
 import { pageDocs } from './pages/docs.js';
 import { pageHome, openForm } from './pages/home.js';
+import { pageWatches } from './pages/watches.js';
 import { api } from './api.js';
 
 const PAGES = {
@@ -26,6 +27,7 @@ const PAGES = {
   chat: { page: pageChat, crumb: 'Ask Warden', aside: true },
   agents: { page: pageAgents, crumb: 'Agents' },
   runbooks: { page: pageRunbooks, crumb: 'Runbooks' },
+  watches: { page: pageWatches, crumb: 'Watches' },
   cells: { page: pageCells, crumb: 'Cells' },
   connections: { page: pageConnections, crumb: 'Connections' },
   responders: { page: pageResponders, crumb: 'Responders' },
@@ -37,7 +39,12 @@ function render() {
   if (!store.state) return;
   const r = route(); const app = document.getElementById('app');
   const active = document.activeElement; const activeId = active && active.id; const activeVal = active && 'value' in active ? active.value : null;
-  const scrollEl = app.querySelector('.content'); const sc = r === lastRoute && scrollEl ? scrollEl.scrollTop : 0; lastRoute = r;
+  const scrollEl = app.querySelector('.content'); const sc = r === lastRoute && scrollEl ? scrollEl.scrollTop : 0;
+  // scroll containers that must not jump when the page is rebuilt: keep their
+  // position by id, and keep a thread pinned to its end when it was there
+  const kept = {};
+  if (r === lastRoute) app.querySelectorAll('[data-keep-scroll]').forEach((n) => { kept[n.id] = { top: n.scrollTop, atEnd: n.scrollHeight - n.scrollTop - n.clientHeight < 48 }; });
+  lastRoute = r;
   let out;
   if (r === 'login') out = pageLogin();
   else if (r === 'setup-tenant') out = setupShell(pageSetupTenant());
@@ -50,10 +57,12 @@ function render() {
   }
   app.replaceWith(out); out.id = 'app';
   const ns = out.querySelector('.content'); if (ns) ns.scrollTop = sc;
+  out.querySelectorAll('[data-keep-scroll]').forEach((n) => { const k = kept[n.id]; if (!k) { if (n.dataset.keepScroll === 'end') n.scrollTop = n.scrollHeight; return; } n.scrollTop = k.atEnd && n.dataset.keepScroll === 'end' ? n.scrollHeight : k.top; });
   if (activeId) { const again = document.getElementById(activeId); if (again) { if (activeVal !== null && 'value' in again && again.value === '') again.value = activeVal; again.focus(); } }
   drawTiles(); demobar();
 }
 let setupTimer = null;
+const lastFired = {};
 function refreshSetup() {
   if (setupTimer) return;
   setupTimer = setTimeout(() => { setupTimer = null; api.setup().then((o) => { store.setup = o; scheduleRender(); }).catch(() => {}); }, 80);
@@ -62,11 +71,25 @@ function scheduleRender() {
   if (renderQueued) return; renderQueued = true;
   requestAnimationFrame(() => { renderQueued = false; render(); });
 }
+let watchTimer = null;
 function onEvent(ev) {
   const hint = apply(ev);
-  if (hint === 'full') scheduleRender();
+  if (hint === 'full' && ev.type === 'workflow' && !(ev.data && ev.data.fired > (lastFired[ev.data.id] || 0))) {
+    // a watch tick changes only its last run and result: redraw at most every few seconds
+    if (!watchTimer) watchTimer = setTimeout(() => { watchTimer = null; scheduleRender(); }, 2500);
+  } else if (hint === 'full') scheduleRender();
+  if (ev.type === 'workflow' && ev.data) lastFired[ev.data.id] = ev.data.fired;
   else if (hint === 'metrics') drawTiles();
-  else if (hint && hint.kind === 'delta') { const n = document.querySelector(`[data-msg="${hint.id}"]`); if (n) n.textContent = hint.text; else scheduleRender(); }
+  else if (hint && hint.kind === 'delta') {
+    const n = document.querySelector(`[data-msg="${hint.id}"]`);
+    if (!n) scheduleRender();
+    else {
+      // streaming text grows the thread: keep it pinned to the end when it was there
+      const box = n.closest('[data-keep-scroll="end"]'); const atEnd = box && box.scrollHeight - box.scrollTop - box.clientHeight < 48;
+      n.textContent = hint.text;
+      if (box && atEnd) box.scrollTop = box.scrollHeight;
+    }
+  }
   else if (hint && hint.kind === 'toast') toast(hint.text);
   else if (hint && hint.kind === 'ui') { if (hint.data && hint.data.open) { openForm(hint.data.open); go('warden'); } }
   if (ev.type === 'snapshot' || ev.type === 'user' || ev.type === 'tenant') {

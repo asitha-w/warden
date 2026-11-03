@@ -388,3 +388,11 @@ details.details > * + * { margin-top:10px; }
 .band-form .form { max-width:none; }
 .band-approval { display:grid; gap:var(--space-2); padding:var(--space-3); border:1px solid var(--approve); background:var(--approve-soft); border-radius:var(--radius-sm); }
 @media (max-width: 1100px) { .home { grid-template-columns:1fr; height:auto; } .setup-panel { height:auto; overflow:visible; } .home-chat { height:auto; min-height:50vh; } .home-chat .thread { max-height:50vh; } }
+
+/* Watches */
+.watch .head { display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; margin-bottom:var(--space-3); }
+.watch .head .name { font-weight:600; font-size:16px; }
+.watch.off { opacity:.7; }
+.watch .kv { margin-bottom:var(--space-3); }
+.bc-chip.live { display:inline-flex; align-items:center; gap:6px; }
+.bc-chip.live .dot { width:7px; height:7px; border-radius:50%; background:currentColor; animation:warden-pulse 1.4s ease-in-out infinite; }
