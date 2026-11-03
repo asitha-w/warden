@@ -21,9 +21,11 @@ type Step struct {
 
 // Definition ties a scenario id to its fault and its scripted playbook.
 type Definition struct {
-	ID       string
-	NewFault func() world.Fault
-	Playbook []Step
+	ID        string
+	Resource  string // the cell the fault lands on
+	Responder string // the responder whose playbook this is
+	NewFault  func() world.Fault
+	Playbook  []Step
 	// Chain is the causal chain the scripted investigator records.
 	Chain []map[string]string
 }
@@ -31,7 +33,8 @@ type Definition struct {
 // Catalog returns every scenario by id.
 func Catalog() map[string]Definition {
 	return map[string]Definition{
-		"disk-fill":      diskFill(),
+		"disk-fill":      diskFill("web-01"),
+		"disk-fill-edge": diskFill("edge-01"),
 		"bad-release":    badRelease(),
 		"service-crash":  serviceCrash(),
 		"server-stopped": serverStopped(),
@@ -40,26 +43,30 @@ func Catalog() map[string]Definition {
 
 func stamp(d time.Duration) string { return time.Now().Add(d).Format("15:04") }
 
-// --- disk fill on web-01 ---
+// --- disk fill: a deploy turns nginx debug on while logrotate is stalled ---
 
-type diskFillFault struct{ fixed bool }
+type diskFillFault struct {
+	host  string
+	fixed bool
+}
 
-func (f *diskFillFault) ID() string       { return "disk-fill" }
-func (f *diskFillFault) Resource() string { return "web-01" }
+func (f *diskFillFault) ID() string       { return diskFillID(f.host) }
+func (f *diskFillFault) Resource() string { return f.host }
 func (f *diskFillFault) Fixed() bool      { return f.fixed }
 func (f *diskFillFault) Start(w *world.World) {
-	h := w.Hosts["web-01"]
-	h.Activity = append(h.Activity, world.ActivityEntry{At: time.Now().Add(-42 * time.Minute), Actor: "ci-deploy", Text: "Run Command RunShellScript: set NGINX_DEBUG=1 in /etc/nginx/env, nginx -s reload"})
+	h := w.Hosts[f.host]
+	h.Activity = append(h.Activity, world.ActivityEntry{At: time.Now().Add(-42 * time.Minute), Actor: "ci-deploy", Text: "Deploy: set NGINX_DEBUG=1 in /etc/nginx/env, nginx -s reload"})
 	h.Files["/etc/nginx/env"] = "NGINX_DEBUG=1\n"
 	h.Files["/var/lib/logrotate/status"] = "logrotate state -- version 2\n\"/var/log/nginx/access.log\" 2026-10-21-01:00:00\n# last run exited 1: error: stat of /var/log/nginx/access.log.1 failed\n"
 	h.Metrics["log_growth_mb_per_min"] = 80
+	h.Metrics["disk_used_percent"] = max(h.Metrics["disk_used_percent"], 86) // forty minutes of debug logging already landed
 	for i := 0; i < 12; i++ {
 		h.Logs["/var/log/nginx/access.log"] = append(h.Logs["/var/log/nginx/access.log"], fmt.Sprintf("10.0.1.%d - - [%s] \"GET /api/cart HTTP/1.1\" 200 1832 debug: upstream=10.0.2.4:8080 rt=0.012 ua=0.011 cs=hit vars={...3 KB of request variables...}", 20+i, time.Now().Add(-time.Duration(12-i)*time.Second).Format("02/Jan/2006:15:04:05 -0700")))
 	}
-	h.Logs["/var/log/syslog"] = append(h.Logs["/var/log/syslog"], time.Now().Add(-40*time.Minute).Format("Jan 2 15:04:05")+" web-01 logrotate[2211]: error: stat of /var/log/nginx/access.log.1 failed: Permission denied")
+	h.Logs["/var/log/syslog"] = append(h.Logs["/var/log/syslog"], time.Now().Add(-40*time.Minute).Format("Jan 2 15:04:05")+" "+f.host+" logrotate[2211]: error: stat of /var/log/nginx/access.log.1 failed: Permission denied")
 }
 func (f *diskFillFault) Tick(w *world.World) {
-	h := w.Hosts["web-01"]
+	h := w.Hosts[f.host]
 	if !f.fixed {
 		h.Metrics["disk_used_percent"] = min(94, h.Metrics["disk_used_percent"]+2.1)
 	} else {
@@ -68,46 +75,60 @@ func (f *diskFillFault) Tick(w *world.World) {
 	}
 }
 func (f *diskFillFault) Remedy(w *world.World, a world.Action) (bool, string) {
-	if a.Name != "run_command" {
-		return false, ""
-	}
-	if r, _ := a.Args["resource"].(string); r != "web-01" {
+	if r, _ := a.Args["resource"].(string); r != f.host {
 		return false, ""
 	}
 	cmd, _ := a.Args["command"].(string)
-	if !strings.Contains(cmd, "logrotate") {
+	if a.Name != "rotate_logs" && !(a.Name == "run_command" && strings.Contains(cmd, "logrotate")) {
 		return false, ""
 	}
 	f.fixed = true
-	h := w.Hosts["web-01"]
+	h := w.Hosts[f.host]
 	h.Files["/etc/nginx/env"] = "NGINX_DEBUG=0\n"
 	h.Files["/var/lib/logrotate/status"] = "logrotate state -- version 2\n\"/var/log/nginx/access.log\" " + time.Now().Format("2006-01-02-15:04:05") + "\n"
 	return true, "stdout: rotating /var/log/nginx/access.log ... done (3.1 GB compressed)\nnginx: signal process started"
 }
 
-func diskFill() Definition {
+func diskFillID(host string) string {
+	if host == "web-01" {
+		return "disk-fill"
+	}
+	return "disk-fill-edge"
+}
+
+func diskFill(host string) Definition {
+	platform := "Resource Health reports Available. No platform event."
+	ptr := "Resource Health · " + host
+	rps := "310"
+	if host != "web-01" {
+		platform = "UpCloud reports the server started and no maintenance event."
+		ptr = "Server state · " + host
+		rps = "140"
+	}
 	return Definition{
-		ID:       "disk-fill",
-		NewFault: func() world.Fault { return &diskFillFault{} },
+		ID:        diskFillID(host),
+		Resource:  host,
+		Responder: "disk-pressure-linux",
+		NewFault:  func() world.Fault { return &diskFillFault{host: host} },
 		Playbook: []Step{
-			{Say: "Disk pressure on web-01. I will read the disk series, the nginx logs, the Activity Log and the logrotate state before forming a cause."},
-			{Tool: "read_metrics", Input: map[string]any{"resource": "web-01", "metric": "disk_used_percent", "window_minutes": 120}},
-			{Tool: "tail_logs", Input: map[string]any{"resource": "web-01", "path": "/var/log/nginx/access.log", "lines": 20}},
-			{Tool: "get_activity", Input: map[string]any{"resource": "web-01"}},
-			{Tool: "read_file", Input: map[string]any{"resource": "web-01", "path": "/var/lib/logrotate/status"}},
-			{Tool: "read_metrics", Input: map[string]any{"resource": "web-01", "metric": "requests_per_second", "window_minutes": 120}},
-			{Tool: "get_resource_state", Input: map[string]any{"resource": "web-01"}},
-			{Tool: "record_evidence", Input: map[string]any{"kind": "metric", "claim": "Disk on / is above 90% and rising about 2 points a sample, up from 71%.", "pointer": "disk_used_percent · web-01"}},
-			{Tool: "record_evidence", Input: map[string]any{"kind": "log", "claim": "Every access log line carries a debug variable dump of about 3 KB.", "pointer": "/var/log/nginx/access.log · filelog"}},
-			{Tool: "record_evidence", Input: map[string]any{"kind": "activity", "claim": "A Run Command by ci-deploy set NGINX_DEBUG=1 42 minutes ago.", "pointer": "Activity Log · web-01"}},
-			{Tool: "record_evidence", Input: map[string]any{"kind": "config", "claim": "logrotate has not completed since 2026-10-21; last run exited 1.", "pointer": "/var/lib/logrotate/status"}},
-			{Tool: "record_evidence", Input: map[string]any{"kind": "metric", "claim": "Request rate is flat around 310 rps. No traffic spike.", "pointer": "requests_per_second · web-01"}},
-			{Tool: "record_evidence", Input: map[string]any{"kind": "resource", "claim": "Resource Health reports Available. No platform event.", "pointer": "Resource Health · web-01"}},
-			{Tool: "record_hypothesis", Input: map[string]any{"title": "Debug logging enabled by the deploy, and logrotate stalled", "detail": "Supported by the Activity Log, the per-line debug dump in the access log and the logrotate status file.", "verdict": "supported"}},
+			{Say: "Disk pressure on " + host + ". I will read the disk series, the nginx logs, the activity and the logrotate state before forming a cause."},
+			{Tool: "read_metrics", Input: map[string]any{"resource": host, "metric": "disk_used_percent", "window_minutes": 120}},
+			{Tool: "tail_logs", Input: map[string]any{"resource": host, "path": "/var/log/nginx/access.log", "lines": 20}},
+			{Tool: "get_activity", Input: map[string]any{"resource": host}},
+			{Tool: "read_file", Input: map[string]any{"resource": host, "path": "/var/lib/logrotate/status"}},
+			{Tool: "read_metrics", Input: map[string]any{"resource": host, "metric": "requests_per_second", "window_minutes": 120}},
+			{Tool: "get_resource_state", Input: map[string]any{"resource": host}},
+			{Tool: "record_evidence", Input: map[string]any{"kind": "metric", "claim": "Disk on / is above 90% and rising about 2 points a sample.", "pointer": "disk_used_percent · " + host}},
+			{Tool: "record_evidence", Input: map[string]any{"kind": "log", "claim": "Every access log line carries a debug variable dump of about 3 KB.", "pointer": "/var/log/nginx/access.log · " + host}},
+			{Tool: "record_evidence", Input: map[string]any{"kind": "activity", "claim": "A deploy by ci-deploy set NGINX_DEBUG=1 42 minutes ago.", "pointer": "Activity · " + host}},
+			{Tool: "record_evidence", Input: map[string]any{"kind": "config", "claim": "logrotate has not completed since 2026-10-21; last run exited 1.", "pointer": "/var/lib/logrotate/status · " + host}},
+			{Tool: "record_evidence", Input: map[string]any{"kind": "metric", "claim": "Request rate is flat around " + rps + " rps. No traffic spike.", "pointer": "requests_per_second · " + host}},
+			{Tool: "record_evidence", Input: map[string]any{"kind": "resource", "claim": platform, "pointer": ptr}},
+			{Tool: "record_hypothesis", Input: map[string]any{"title": "Debug logging enabled by the deploy, and logrotate stalled", "detail": "Supported by the activity, the per-line debug dump in the access log and the logrotate status file.", "verdict": "supported"}},
 			{Tool: "record_hypothesis", Input: map[string]any{"title": "Traffic spike", "detail": "Rejected: request rate is flat across the window.", "verdict": "rejected"}},
-			{Say: "Cause: the deploy turned on NGINX_DEBUG and logrotate has been failing, so the access log is filling the disk. One action fixes both: force a rotation and turn debug off, then reload nginx."},
-			{Tool: "propose_action", Input: map[string]any{"action": "run_command", "resource": "web-01", "command": "logrotate --force /etc/logrotate.d/nginx && sed -i 's/NGINX_DEBUG=1/NGINX_DEBUG=0/' /etc/nginx/env && nginx -s reload", "summary": "Rotate the access log now and turn nginx debug logging off", "blast_radius": "Rotates the access log and turns debug logging off. nginx reloads without dropping connections. About 3 GB is compressed; nothing is deleted."}},
-			{Tool: "conclude", Input: map[string]any{"summary": "Disk on web-01 filled because a deploy enabled nginx debug logging while logrotate was failing. Fix rotates the log and disables debug.", "cause_verified": true}},
+			{Say: "Cause: the deploy turned on NGINX_DEBUG and logrotate has been failing, so the access log is filling the disk. Rotating the logs is the catalogue action for this; it also turns debug off and reloads nginx."},
+			{Tool: "propose_action", Input: map[string]any{"action": "rotate_logs", "resource": host, "summary": "Rotate the nginx logs now and turn debug logging off", "blast_radius": "Rotates and compresses the access log and turns debug logging off. nginx reloads without dropping connections. About 3 GB is compressed; nothing is deleted."}},
+			{Tool: "conclude", Input: map[string]any{"summary": "Disk on " + host + " filled because a deploy enabled nginx debug logging while logrotate was failing. Fix rotates the logs and disables debug.", "cause_verified": true}},
 		},
 		Chain: []map[string]string{
 			{"time": stamp(-42 * time.Minute), "text": "Deploy sets NGINX_DEBUG=1"},

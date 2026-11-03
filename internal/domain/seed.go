@@ -76,7 +76,7 @@ func DefaultTelemetry(kind string) Telemetry {
 func SeedResponders() []*Responder {
 	return []*Responder{
 		{ID: "disk-pressure-linux", Signal: "disk_used_percent > 90 for 5m", Scope: "VMs with a probe", Mode: "Review", Level: "L3", Agent: "investigator",
-			Tools: []ToolPolicy{{Tool: "read_metrics", Policy: PolicyAllow}, {Tool: "tail_logs", Policy: PolicyAllow}, {Tool: "run_command", Policy: PolicyAsk}, {Tool: "restart_service", Policy: PolicyDeny}}},
+			Tools: []ToolPolicy{{Tool: "read_metrics", Policy: PolicyAllow}, {Tool: "tail_logs", Policy: PolicyAllow}, {Tool: "rotate_logs", Policy: PolicyAsk}, {Tool: "run_command", Policy: PolicyAsk}, {Tool: "restart_service", Policy: PolicyDeny}}},
 		{ID: "release-regression", Signal: "error_rate > 5% for 5m after a rollout", Scope: "Kubernetes services", Mode: "Review", Level: "L3", Agent: "investigator",
 			Tools: []ToolPolicy{{Tool: "read_metrics", Policy: PolicyAllow}, {Tool: "tail_logs", Policy: PolicyAllow}, {Tool: "rollout_undo", Policy: PolicyAsk}, {Tool: "delete_pod", Policy: PolicyDeny}}},
 		{ID: "service-down", Signal: "http_up == 0 for 3m on a running host", Scope: "Hosts with a probe", Mode: "Review", Level: "L3", Agent: "investigator",
@@ -168,7 +168,8 @@ ops@shop.example. Edge is Standard criticality; no paging.
 // SeedScenarios lists the faults the demo can inject.
 func SeedScenarios() []*Scenario {
 	return []*Scenario{
-		{ID: "disk-fill", Name: "Fill the disk on web-01", Description: "A deploy turns nginx debug logging on and logrotate has stalled. Expect disk-pressure-linux, a Run Command fix after approval.", Resource: "web-01", Status: "idle"},
+		{ID: "disk-fill", Name: "Fill the disk on web-01", Description: "A deploy turns nginx debug logging on and logrotate has stalled. Expect disk-pressure-linux and a log rotation after approval.", Resource: "web-01", Status: "idle"},
+		{ID: "disk-fill-edge", Name: "Fill the disk on edge-01", Description: "A deploy turns nginx debug logging on and logrotate has stalled on the UpCloud server. Expect disk-pressure-linux; a standing order can rotate the logs without asking.", Resource: "edge-01", Status: "idle"},
 		{ID: "bad-release", Name: "Ship a bad version of shop-api", Description: "Rollout v2.4.1 on aks-shop raises the error rate to 18%. Expect release-regression and a rollout undo after approval.", Resource: "aks-shop", Status: "idle"},
 		{ID: "service-crash", Name: "Crash nginx on edge-01", Description: "The kernel OOM-kills nginx. Expect service-down and a service restart after approval.", Resource: "edge-01", Status: "idle"},
 		{ID: "server-stopped", Name: "Stop the UpCloud server edge-01", Description: "The server stops with no operator event. Expect server-stopped to start it autonomously (L4).", Resource: "edge-01", Status: "idle"},
@@ -302,8 +303,8 @@ func NewState(model, reasoner string) *State {
 func SeedWorkflows() []*Workflow {
 	t := time.Date(2026, 10, 28, 9, 0, 0, 0, time.UTC)
 	return []*Workflow{
-		{ID: "wf-disk-shop-web", Name: "Disk on shop web VMs", Every: 10, Selector: map[string]string{"app": "shop", "tier": "web"}, Collect: "metric", Source: "disk_used_percent", Condition: "above 90% on 3 consecutive reads", Trigger: "responder:disk-pressure-linux", Rule: "disk-pressure-linux/web-01", Hold: 3, Enabled: true, CreatedBy: "default", CreatedAt: t},
-		{ID: "wf-errors-shop-api", Name: "Error rate on shop API", Every: 10, Selector: map[string]string{"app": "shop", "tier": "api"}, Collect: "metric", Source: "error_rate_percent", Condition: "above 5% on 3 consecutive reads", Trigger: "responder:release-regression", Rule: "release-regression/aks-shop", Hold: 3, Enabled: true, CreatedBy: "default", CreatedAt: t},
+		{ID: "wf-disk-shop-web", Name: "Disk on shop web VMs", Every: 10, Selector: map[string]string{"app": "shop", "tier": "web"}, Collect: "metric", Source: "disk_used_percent", Metric: "disk_used_percent", Op: ">", Threshold: 90, Condition: "disk_used_percent > 90 on 3 consecutive reads", Trigger: "responder:disk-pressure-linux", Hold: 3, Enabled: true, CreatedBy: "default", CreatedAt: t},
+		{ID: "wf-errors-shop-api", Name: "Error rate on shop API", Every: 10, Selector: map[string]string{"app": "shop", "tier": "api"}, Collect: "metric", Source: "error_rate_percent", Metric: "error_rate_percent", Op: ">", Threshold: 5, Condition: "error_rate_percent > 5 on 3 consecutive reads", Trigger: "responder:release-regression", Hold: 3, Enabled: true, CreatedBy: "default", CreatedAt: t},
 		{ID: "wf-http-edge", Name: "HTTP up on edge proxies", Every: 10, Selector: map[string]string{"app": "edge", "tier": "proxy"}, Collect: "metric", Source: "http_up", Condition: "0 on 3 consecutive reads while the host is started", Trigger: "responder:service-down", Rule: "service-down/edge-01", Hold: 3, Enabled: true, CreatedBy: "default", CreatedAt: t},
 		{ID: "wf-state-edge", Name: "Server state on edge proxies", Every: 10, Selector: map[string]string{"app": "edge", "tier": "proxy"}, Collect: "provider-state", Source: "state", Condition: "stopped with no operator stop event, 2 consecutive reads", Trigger: "responder:server-stopped", Rule: "server-stopped/edge-01", Hold: 2, Enabled: true, CreatedBy: "default", CreatedAt: t},
 	}

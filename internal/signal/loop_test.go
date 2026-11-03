@@ -35,7 +35,9 @@ func TestLogWorkflowFiresOncePerSignature(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := New(st, w, orch, time.Second, slog.Default())
-	l.runWorkflows() // quiet: nothing new, cursor set
+	l.runWorkflows() // baseline: cursor set, nothing counts yet
+	l.last = map[string]time.Time{}
+	l.runWorkflows() // quiet: nothing new
 	var fired int
 	st.View(func(s *domain.State) { fired = s.Workflows[0].Fired })
 	if fired != 0 {

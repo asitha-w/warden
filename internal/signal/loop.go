@@ -128,12 +128,12 @@ func (l *Loop) step() {
 		}
 	})
 	for _, f := range verifying {
-		rule := l.ruleFor(f.ResponderID, f.Resource)
-		if rule == nil {
-			l.orch.Resolve(f.ID, "The remediator reported success and no responder rule applies to re-check.")
+		check := l.checkFor(f.ResponderID, f.Resource)
+		if check == nil {
+			l.orch.Resolve(f.ID, "The remediator reported success and no watch applies to re-check.")
 			continue
 		}
-		if rule.Check(l.w) {
+		if check() {
 			l.clear[f.ID] = 0
 			l.tries[f.ID]++
 			if l.tries[f.ID] > 60 {
@@ -143,10 +143,14 @@ func (l *Loop) step() {
 		}
 		l.clear[f.ID]++
 		if l.clear[f.ID] >= 3 {
-			l.orch.Resolve(f.ID, l.clearedText(f.Resource, rule.Responder))
+			l.orch.Resolve(f.ID, l.clearedText(f.Resource, f.ResponderID))
 			delete(l.clear, f.ID)
 			delete(l.tries, f.ID)
-			l.hold[rule.Responder+"/"+rule.Resource] = 0
+			for k := range l.hold {
+				if strings.HasSuffix(k, "/"+f.Resource) {
+					l.hold[k] = 0
+				}
+			}
 		}
 	}
 }
@@ -180,8 +184,36 @@ func (l *Loop) runWorkflows() {
 		l.last[wf.ID] = now
 		result := ""
 		fired := false
-		switch wf.Collect {
-		case "metric", "provider-state":
+		switch {
+		case wf.Metric != "":
+			// generic metric watch: every matching onboarded cell, its own hold
+			n := 0
+			for _, c := range cells {
+				if !wf.Matches(&c) {
+					continue
+				}
+				n++
+				key := wf.ID + "/" + c.ID
+				v, ok := l.w.Metric(c.ID, wf.Metric)
+				if !ok {
+					result = fmt.Sprintf("%s has no metric %s", c.ID, wf.Metric)
+					continue
+				}
+				if compare(wf.Op, v, wf.Threshold) {
+					l.hold[key]++
+				} else {
+					l.hold[key] = 0
+				}
+				result = fmt.Sprintf("%s: %s=%.1f, condition %s (%d of %d)", c.ID, wf.Metric, v, map[bool]string{true: "holds", false: "clear"}[l.hold[key] > 0], l.hold[key], wf.Hold)
+				if l.hold[key] == wf.Hold {
+					fired = true
+					l.fire(wf, c.ID, fmt.Sprintf("%s %s %.0f on %s", wf.Metric, wf.Op, wf.Threshold, c.ID), "warning", fmt.Sprintf("%s on %s is %.1f, %s %.0f on %d consecutive reads.", wf.Metric, c.ID, v, wf.Op, wf.Threshold, wf.Hold))
+				}
+			}
+			if n == 0 {
+				result = "no cell matches the selector"
+			}
+		case wf.Collect == "metric" || wf.Collect == "provider-state":
 			r := l.ruleByID(wf.Rule)
 			if r == nil {
 				result = "no rule " + wf.Rule
@@ -203,7 +235,7 @@ func (l *Loop) runWorkflows() {
 				fired = true
 				l.fire(wf, r.Resource, r.Title, r.Severity, r.Text(l.w))
 			}
-		case "log-digest":
+		case wf.Collect == "log-digest":
 			n := 0
 			for _, c := range cells {
 				if !wf.Matches(&c) {
@@ -211,12 +243,18 @@ func (l *Loop) runWorkflows() {
 				}
 				n++
 				key := wf.ID + "/" + c.ID
+				_, seenBefore := l.cursor[key]
 				d, err := l.w.LogDigest(c.ID, wf.Source, l.cursor[key])
 				if err != nil {
 					result = err.Error()
 					continue
 				}
 				l.cursor[key] = d.Cursor
+				if !seenBefore {
+					// first run is the baseline: only what is written from now on counts
+					result = fmt.Sprintf("%s: baseline taken, %d existing lines ignored", c.ID, d.NewLines)
+					continue
+				}
 				if l.seen[key] == nil {
 					l.seen[key] = map[string]bool{}
 				}
@@ -258,13 +296,56 @@ func (l *Loop) runWorkflows() {
 	}
 }
 
-// fire hands a workflow hit to the responder it names, or to Warden.
+// fire hands a watch hit to the responder it names, or to Warden. A
+// standing order travels with the signal so the run may execute the
+// pre-approved action without asking.
 func (l *Loop) fire(wf domain.Workflow, resource, title, severity, text string) {
 	if strings.HasPrefix(wf.Trigger, "responder:") {
-		l.orch.HandleSignal(agent.Signal{ResponderID: strings.TrimPrefix(wf.Trigger, "responder:"), Resource: resource, Title: title, Severity: severity, Text: "Workflow " + wf.ID + ": " + text})
+		rid := strings.TrimPrefix(wf.Trigger, "responder:")
+		id := l.orch.HandleSignal(agent.Signal{ResponderID: rid, Resource: resource, Title: title, Severity: severity, Text: "Watch " + wf.ID + " (" + wf.Name + "): " + text, Allow: wf.Allow, AllowedBy: wf.ID})
+		if id != "" {
+			l.orch.AnnounceWatch(wf, resource, rid, id, text)
+		}
 		return
 	}
 	l.orch.HandleWorkflow(wf, resource, title, text)
+}
+
+func compare(op string, v, limit float64) bool {
+	switch op {
+	case "<":
+		return v < limit
+	case "==":
+		return v == limit
+	default:
+		return v > limit
+	}
+}
+
+// checkFor is the condition to re-read when verifying a fix: the generic
+// watch that triggers the responder on the cell, or the named rule.
+func (l *Loop) checkFor(responder, resource string) func() bool {
+	var wf *domain.Workflow
+	var cell *domain.Cell
+	l.st.View(func(s *domain.State) {
+		cell = s.Cell(resource)
+		for _, w := range s.Workflows {
+			if w.Metric != "" && w.Trigger == "responder:"+responder && cell != nil && w.Matches(cell) {
+				cp := *w
+				wf = &cp
+			}
+		}
+	})
+	if wf != nil {
+		return func() bool {
+			v, ok := l.w.Metric(resource, wf.Metric)
+			return ok && compare(wf.Op, v, wf.Threshold)
+		}
+	}
+	if r := l.ruleFor(responder, resource); r != nil {
+		return func() bool { return r.Check(l.w) }
+	}
+	return nil
 }
 
 func (l *Loop) ruleByID(id string) *Rule {

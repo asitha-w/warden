@@ -47,6 +47,8 @@ type Signal struct {
 	Title       string
 	Severity    string
 	Text        string
+	Allow       []string // standing order: actions pre-approved for the run
+	AllowedBy   string   // the watch that holds the order
 }
 
 // HandleSignal routes a matched signal: it opens a finding and a run and starts
@@ -68,10 +70,14 @@ func (o *Orchestrator) HandleSignal(sig Signal) string {
 		fid := o.st.NextID("F", 0x8d)
 		runID = o.st.NextID("inv", 0xa6)
 		f := &domain.Finding{ID: fid, Title: sig.Title, Service: s.GroupName(sig.Resource), Resource: sig.Resource, Severity: sig.Severity, Status: domain.FindingInvestigating, RunID: runID, ResponderID: r.ID, CreatedAt: time.Now()}
-		run := &domain.Run{ID: runID, Agent: r.Agent, Trigger: "signal", Task: sig.Title, FindingID: fid, ResponderID: r.ID, Status: domain.RunRunning, Outcome: "Running", StartedAt: time.Now(), Messages: []*domain.Message{}, Evidence: []domain.Evidence{}, Hypotheses: []domain.Hypothesis{}, Chain: []domain.ChainStep{}, Questions: []domain.QA{}, Runbooks: []string{}}
+		run := &domain.Run{ID: runID, Agent: r.Agent, Trigger: "signal", Task: sig.Title, FindingID: fid, ResponderID: r.ID, Status: domain.RunRunning, Outcome: "Running", StartedAt: time.Now(), Messages: []*domain.Message{}, Evidence: []domain.Evidence{}, Hypotheses: []domain.Hypothesis{}, Chain: []domain.ChainStep{}, Questions: []domain.QA{}, Runbooks: []string{}, Allowed: sig.Allow, AllowedBy: sig.AllowedBy}
+		order := ""
+		if len(sig.Allow) > 0 {
+			order = fmt.Sprintf(" Standing order %s pre-approves: %s.", sig.AllowedBy, strings.Join(sig.Allow, ", "))
+		}
 		run.Messages = append(run.Messages,
-			&domain.Message{ID: o.st.NextID("m", 0), Role: domain.RoleSignal, Title: "Signal loop", Text: sig.Text + fmt.Sprintf(" Responder %s matched.", r.ID), At: time.Now()},
-			&domain.Message{ID: o.st.NextID("m", 0), Role: domain.RoleOrchestrator, Agent: "orchestrator", Title: "Orchestrator", Text: fmt.Sprintf("Starting %s for %s under responder %s (%s, %s) with a budget of %d tool calls.%s", agent.Name, sig.Resource, r.ID, r.Mode, r.Level, agent.MaxToolCalls, attachRunbooks(s, run, sig.Resource)), At: time.Now()})
+			&domain.Message{ID: o.st.NextID("m", 0), Role: domain.RoleSignal, Title: "Watch", Text: sig.Text + fmt.Sprintf(" Responder %s matched.", r.ID), At: time.Now()},
+			&domain.Message{ID: o.st.NextID("m", 0), Role: domain.RoleOrchestrator, Agent: "orchestrator", Title: "Warden", Text: fmt.Sprintf("Starting %s for %s under responder %s (%s, %s) with a budget of %d tool calls.%s%s", agent.Name, sig.Resource, r.ID, r.Mode, r.Level, agent.MaxToolCalls, order, attachRunbooks(s, run, sig.Resource)), At: time.Now()})
 		s.Findings = append([]*domain.Finding{f}, s.Findings...)
 		s.Runs = append([]*domain.Run{run}, s.Runs...)
 		s.Usage["orchestrator"].Runs++
@@ -156,6 +162,7 @@ func (o *Orchestrator) runInvestigation(runID string) {
 		return
 	}
 	tb := NewToolbox(o.st, o.w, o.gate, runID, run.Agent, responder, maxCalls)
+	tb.Allowed, tb.AllowedBy = run.Allowed, run.AllowedBy
 	err := o.reasoner.Investigate(ctx, run, tb)
 	o.st.Update(func(s *domain.State) []store.Event {
 		r := s.Run(runID)

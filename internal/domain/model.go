@@ -358,12 +358,16 @@ type Workflow struct {
 	Name       string            `json:"name"`
 	Every      int               `json:"every"` // seconds between runs
 	Selector   map[string]string `json:"selector"`
-	Collect    string            `json:"collect"`        // metric, log-digest, provider-state
-	Source     string            `json:"source"`         // metric name, log path or * for every log
-	Condition  string            `json:"condition"`      // human-readable; the evaluation is in the signal loop
-	Trigger    string            `json:"trigger"`        // responder:<id> or wake-warden
-	Rule       string            `json:"rule,omitempty"` // metric workflows: the check in the signal loop
-	Hold       int               `json:"hold,omitempty"` // consecutive runs the condition must hold
+	Collect    string            `json:"collect"`             // metric, log-digest, provider-state
+	Source     string            `json:"source"`              // metric name, log path or * for every log
+	Condition  string            `json:"condition"`           // human-readable; the evaluation is in the signal loop
+	Trigger    string            `json:"trigger"`             // responder:<id> or wake-warden
+	Rule       string            `json:"rule,omitempty"`      // special metric checks named in the signal loop
+	Metric     string            `json:"metric,omitempty"`    // generic metric watches: the metric read on each matching cell
+	Op         string            `json:"op,omitempty"`        // >, <, ==
+	Threshold  float64           `json:"threshold,omitempty"` // compared with the metric
+	Hold       int               `json:"hold,omitempty"`      // consecutive runs the condition must hold
+	Allow      []string          `json:"allow,omitempty"`     // standing order: catalogue actions the responder may run without asking
 	Enabled    bool              `json:"enabled"`
 	CreatedBy  string            `json:"createdBy,omitempty"`
 	CreatedAt  time.Time         `json:"createdAt"`
@@ -571,6 +575,8 @@ type Run struct {
 	Hypotheses    []Hypothesis `json:"hypotheses"`
 	Chain         []ChainStep  `json:"chain"`
 	ApprovalID    string       `json:"approvalId,omitempty"`
+	Allowed       []string     `json:"allowed,omitempty"` // actions pre-approved by the standing order that started the run
+	AllowedBy     string       `json:"allowedBy,omitempty"`
 	Runbooks      []string     `json:"runbooks"`
 	Questions     []QA         `json:"questions"`
 	Summary       string       `json:"summary,omitempty"`

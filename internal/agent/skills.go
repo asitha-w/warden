@@ -16,9 +16,20 @@ import (
 // ends in start_responder or start_investigation, which are deterministic.
 func (o *Orchestrator) HandleWorkflow(wf domain.Workflow, resource, title, text string) {
 	o.st.Update(func(s *domain.State) []store.Event {
-		return []store.Event{store.Activity(s, "signal", fmt.Sprintf("Workflow %s (%s) fired on %s: %s", wf.ID, wf.Name, resource, text), "", false), store.Toast("Workflow fired: " + title)}
+		return []store.Event{store.Activity(s, "signal", fmt.Sprintf("Watch %s (%s) fired on %s: %s", wf.ID, wf.Name, resource, text), "", false), store.Toast("Watch fired: " + title)}
 	})
 	o.Announce(fmt.Sprintf("[announce] workflow %s fired on %s: %s\nDecide what to do. If a responder in the table fits, call start_responder with it and the resource; otherwise call start_investigation. Say in one sentence what fired and what you started.", wf.ID, resource, text))
+}
+
+// AnnounceWatch makes Warden say what a watch did when it started a responder
+// directly, so the operator hears it in the thread without a decision turn
+// being needed for the routing itself.
+func (o *Orchestrator) AnnounceWatch(wf domain.Workflow, resource, responder, runID, text string) {
+	order := ""
+	if len(wf.Allow) > 0 {
+		order = " Standing order: " + strings.Join(wf.Allow, ", ") + " runs without asking; anything else still asks."
+	}
+	o.Announce(fmt.Sprintf("[announce] watch %s (%s) fired on %s: %s It started responder %s as run %s.%s\nTell the operator in two sentences what fired, what is running, and whether anything will need their approval.", wf.ID, wf.Name, resource, text, responder, runID, order))
 }
 
 // SkillTools are the orchestrator's tools for runbooks, workflows, agents and
@@ -27,7 +38,7 @@ func SkillTools() []ToolDef {
 	cell := map[string]any{"type": "string", "description": "Cell id, for example edge-01"}
 	return []ToolDef{
 		{Name: "save_runbook", Description: "Create or update a runbook: tenant guidance the investigator follows on matching cells. Selector is labels like app=edge, tier=proxy. The body is Markdown with the sections: what runs here, applies when, health signals, known fixes in order, never, escalation.", Schema: map[string]any{"name": map[string]any{"type": "string"}, "selector": map[string]any{"type": "string", "description": "k=v, k=v"}, "body": map[string]any{"type": "string"}}, Required: []string{"name", "selector", "body"}},
-		{Name: "create_workflow", Description: "Create a monitoring workflow: a deterministic loop in the runtime that costs no tokens. collect is log-digest (source: a log path or * for every log on the cell) or metric (source: metric name). It fires on a new error signature (log-digest) and triggers wake-warden, which asks you to decide, or responder:<id>.", Schema: map[string]any{"name": map[string]any{"type": "string"}, "cell": cell, "every_seconds": map[string]any{"type": "integer"}, "collect": map[string]any{"type": "string", "enum": []string{"log-digest", "metric"}}, "source": map[string]any{"type": "string"}, "trigger": map[string]any{"type": "string", "description": "wake-warden or responder:<id>"}}, Required: []string{"name", "cell", "collect", "source"}},
+		{Name: "create_workflow", Description: "Create a watch: a deterministic monitoring loop in the runtime that costs no tokens. collect is log-digest (source: a log path or * for every log; fires on a new error signature) or metric (source: metric name such as disk_used_percent; op > < ==; threshold; hold reads). Scope is a cell id or a selector like env=production. trigger is wake-warden (you decide) or responder:<id>. allow makes it a standing order: catalogue actions (rotate_logs, restart_service, start_server, notify) the responder may run without asking; never run_command.", Schema: map[string]any{"name": map[string]any{"type": "string"}, "cell": cell, "selector": map[string]any{"type": "string", "description": "k=v, k=v; used instead of cell"}, "every_seconds": map[string]any{"type": "integer"}, "collect": map[string]any{"type": "string", "enum": []string{"log-digest", "metric"}}, "source": map[string]any{"type": "string"}, "op": map[string]any{"type": "string", "enum": []string{">", "<", "=="}}, "threshold": map[string]any{"type": "number"}, "hold": map[string]any{"type": "integer"}, "trigger": map[string]any{"type": "string", "description": "wake-warden or responder:<id>"}, "allow": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}, Required: []string{"name", "collect", "source"}},
 		{Name: "add_agent", Description: "Add a specialist agent from a template and bind it to a scope (labels like app=edge). The responders the template names start it instead of the investigator for cells in scope. Templates: see get_setup_state or list_templates.", Schema: map[string]any{"template": map[string]any{"type": "string"}, "scope": map[string]any{"type": "string", "description": "k=v, k=v; empty for every cell"}}, Required: []string{"template"}},
 		{Name: "list_templates", Description: "The agent templates Warden can add, with what they do and which responders they take over.", Schema: map[string]any{}},
 		{Name: "start_responder", Description: "Route a workflow hit to a responder from the table: opens a finding and starts the responder's agent on the resource under the responder's policy. Use after a workflow fired when a responder fits.", Schema: map[string]any{"responder": map[string]any{"type": "string"}, "resource": cell, "title": map[string]any{"type": "string"}, "reason": map[string]any{"type": "string"}}, Required: []string{"responder", "resource", "title"}},
@@ -110,37 +121,76 @@ func (o *Orchestrator) skillTool(name string, in map[string]any, by string) (str
 		if collect != "log-digest" && collect != "metric" {
 			return "", fmt.Errorf("collect must be log-digest or metric")
 		}
-		if collect == "metric" {
-			return "", fmt.Errorf("metric workflows are the seeded ones for now; a log-digest workflow can be created")
+		var allow []string
+		if raw, ok := in["allow"].([]any); ok {
+			for _, v := range raw {
+				if a, ok := v.(string); ok && a != "" {
+					allow = append(allow, a)
+				}
+			}
+		}
+		for _, a := range allow {
+			switch a {
+			case "rotate_logs", "restart_service", "start_server", "notify":
+			default:
+				return "", fmt.Errorf("%s cannot be pre-approved; only catalogue actions can (rotate_logs, restart_service, start_server, notify)", a)
+			}
+		}
+		if len(allow) > 0 && !strings.HasPrefix(trigger, "responder:") {
+			return "", fmt.Errorf("a standing order needs a responder trigger; wake-warden decisions are never pre-approved")
 		}
 		var wf *domain.Workflow
 		var err error
 		o.st.Update(func(s *domain.State) []store.Event {
-			c := s.Cell(cellID)
-			if c == nil {
-				err = fmt.Errorf("no cell %s", cellID)
-				return nil
-			}
-			sel := CellSelector(c)
+			sel := parseSelector(str(in, "selector"))
 			if len(sel) == 0 {
-				err = fmt.Errorf("%s has no app or tier label to select on", cellID)
-				return nil
+				c := s.Cell(cellID)
+				if c == nil {
+					err = fmt.Errorf("no cell %s and no selector", cellID)
+					return nil
+				}
+				sel = CellSelector(c)
+				if len(sel) == 0 {
+					err = fmt.Errorf("%s has no app or tier label to select on", cellID)
+					return nil
+				}
 			}
 			if trigger != "wake-warden" && (!strings.HasPrefix(trigger, "responder:") || s.Responder(strings.TrimPrefix(trigger, "responder:")) == nil) {
 				err = fmt.Errorf("trigger must be wake-warden or responder:<id> from the table")
 				return nil
 			}
-			wf = &domain.Workflow{ID: o.st.NextID("wf", 0), Name: strings.TrimSpace(str(in, "name")), Every: every, Selector: sel, Collect: collect, Source: source, Condition: "a new error signature in what was written since the last run", Trigger: trigger, Enabled: true, CreatedBy: by, CreatedAt: time.Now()}
+			wf = &domain.Workflow{ID: o.st.NextID("wf", 0), Name: strings.TrimSpace(str(in, "name")), Every: every, Selector: sel, Collect: collect, Source: source, Trigger: trigger, Enabled: true, CreatedBy: by, CreatedAt: time.Now(), Allow: allow}
+			if collect == "metric" {
+				wf.Metric = source
+				wf.Op = str(in, "op")
+				if wf.Op == "" {
+					wf.Op = ">"
+				}
+				if t, ok := in["threshold"].(float64); ok {
+					wf.Threshold = t
+				}
+				wf.Hold = num(in, "hold", 3)
+				if wf.Hold < 1 {
+					wf.Hold = 1
+				}
+				wf.Condition = fmt.Sprintf("%s %s %.0f on %d consecutive reads", wf.Metric, wf.Op, wf.Threshold, wf.Hold)
+			} else {
+				wf.Condition = "a new error signature in what was written since the last run"
+			}
 			if wf.Name == "" {
-				wf.Name = "Logs on " + cellID
+				wf.Name = strings.ToUpper(source[:1]) + source[1:] + " on " + selectorText(sel)
 			}
 			s.Workflows = append(s.Workflows, wf)
-			return []store.Event{{Type: "workflow", Data: wf}, store.Activity(s, "run", fmt.Sprintf("Warden created workflow %s (%s): every %ds, %s of %s on %s, trigger %s.", wf.ID, wf.Name, every, collect, source, selectorText(sel), trigger), "", false)}
+			return []store.Event{{Type: "workflow", Data: wf}, store.Activity(s, "run", fmt.Sprintf("Warden created watch %s (%s): every %ds, %s on %s, %s, trigger %s%s.", wf.ID, wf.Name, every, collect, selectorText(sel), wf.Condition, trigger, map[bool]string{true: ", standing order: " + strings.Join(allow, ", "), false: ""}[len(allow) > 0]), "", false)}
 		})
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Created workflow %s (%s): every %d seconds, %s of %s on cells matching %s, fires on a new error signature, trigger %s. It runs in the runtime and costs no tokens; a model runs only when it fires.", wf.ID, wf.Name, every, collect, source, selectorText(wf.Selector), trigger), nil
+		order := ""
+		if len(allow) > 0 {
+			order = fmt.Sprintf(" Standing order: %s may run without asking when it fires; anything else still asks, and delete-class actions are denied in every mode.", strings.Join(allow, ", "))
+		}
+		return fmt.Sprintf("Created watch %s (%s): every %d seconds on cells matching %s, %s, trigger %s. It runs in the runtime and costs no tokens; a model runs only when it fires.%s", wf.ID, wf.Name, every, selectorText(wf.Selector), wf.Condition, trigger, order), nil
 	case "list_templates":
 		var out []string
 		o.st.View(func(s *domain.State) {
@@ -211,11 +261,26 @@ func (o *Orchestrator) skillTool(name string, in map[string]any, by string) (str
 		if !exists {
 			return "", fmt.Errorf("responder %s or cell %s not found", rid, res)
 		}
-		id := o.HandleSignal(Signal{ResponderID: rid, Resource: res, Title: title, Severity: "critical", Text: "Warden: " + reason})
+		// a standing order for this responder that covers the cell applies no
+		// matter which watch noticed first
+		var allow []string
+		var by string
+		o.st.View(func(s *domain.State) {
+			c := s.Cell(res)
+			for _, wf := range s.Workflows {
+				if wf.Enabled && len(wf.Allow) > 0 && wf.Trigger == "responder:"+rid && c != nil && wf.Matches(c) {
+					allow, by = wf.Allow, wf.ID
+				}
+			}
+		})
+		id := o.HandleSignal(Signal{ResponderID: rid, Resource: res, Title: title, Severity: "critical", Text: "Warden: " + reason, Allow: allow, AllowedBy: by})
 		if id == "" {
 			return fmt.Sprintf("A finding for %s on %s is already open; nothing new started.", rid, res), nil
 		}
-		return fmt.Sprintf("Started run %s on %s under responder %s. Watch it under Investigations.", id, res, rid), nil
+		if len(allow) > 0 {
+			return fmt.Sprintf("Started run %s on %s under responder %s. Standing order %s pre-approves %s, so no approval is needed for that. Watch it under Investigations.", id, res, rid, by, strings.Join(allow, ", ")), nil
+		}
+		return fmt.Sprintf("Started run %s on %s under responder %s. Any fix will need approval. Watch it under Investigations.", id, res, rid), nil
 	}
 	return "", fmt.Errorf("unknown tool %q", name)
 }

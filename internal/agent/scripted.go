@@ -45,7 +45,25 @@ var responderScenario = map[string]string{
 // Investigate implements Reasoner.
 func (s *Scripted) Investigate(ctx context.Context, run *domain.Run, tb *Toolbox) error {
 	var playbook []scenario.Step
-	if def, ok := s.cat[responderScenario[run.ResponderID]]; ok {
+	var resource string
+	s.st.View(func(st *domain.State) {
+		if f := st.Finding(run.FindingID); f != nil {
+			resource = f.Resource
+		}
+	})
+	var def *scenario.Definition
+	for id := range s.cat {
+		d := s.cat[id]
+		if d.Responder == run.ResponderID && d.Resource == resource {
+			def = &d
+		}
+	}
+	if def == nil {
+		if d, ok := s.cat[responderScenario[run.ResponderID]]; ok {
+			def = &d
+		}
+	}
+	if def != nil {
 		playbook = def.Playbook
 		tb.Chain = def.Chain
 	} else {
@@ -109,6 +127,14 @@ func (s *Scripted) Chat(ctx context.Context, req ChatRequest, onDelta func(strin
 	switch {
 	case strings.HasPrefix(q, "[announce] tenant"):
 		answer = "I am Warden, the agent that looks after this estate. Which provider do you run on: Azure, UpCloud or AWS? Tell me and I open the right form; after that I take it from there."
+	case strings.HasPrefix(q, "[announce] watch"):
+		first, _, _ := strings.Cut(strings.TrimPrefix(req.Question, "[announce] watch "), "\n")
+		answer = "A watch fired and I acted on it: " + first
+		if strings.Contains(first, "Standing order") {
+			answer += " Nothing needs your approval; the standing order covers it."
+		} else {
+			answer += " The fix will need your approval; it appears in the panel when the investigator proposes it."
+		}
 	case req.Call != nil && strings.HasPrefix(q, "[announce] workflow"):
 		first, _, _ := strings.Cut(strings.TrimPrefix(req.Question, "[announce] workflow "), "\n")
 		res := resourceIn(q)
@@ -120,15 +146,15 @@ func (s *Scripted) Chat(ctx context.Context, req ChatRequest, onDelta func(strin
 		if rid != "" && res != "" {
 			out, err := req.Call(ctx, "start_responder", map[string]any{"responder": rid, "resource": res, "title": responderTitle(rid, res), "reason": short})
 			if err == nil {
-				answer = fmt.Sprintf("A workflow fired on %s: %s That matches responder %s, so I started it. %s", res, short, rid, out)
+				answer = fmt.Sprintf("A watch fired on %s: %s That matches responder %s, so I started it. %s", res, short, rid, out)
 			} else {
-				answer = fmt.Sprintf("A workflow fired on %s: %s I could not start responder %s: %s", res, short, rid, err.Error())
+				answer = fmt.Sprintf("A watch fired on %s: %s I could not start responder %s: %s", res, short, rid, err.Error())
 			}
 		} else if res != "" {
-			out, _ := req.Call(ctx, "start_investigation", map[string]any{"resource": res, "task": "A workflow fired: " + short})
-			answer = fmt.Sprintf("A workflow fired on %s: %s No responder in the table fits, so I started a general investigation. %s", res, short, out)
+			out, _ := req.Call(ctx, "start_investigation", map[string]any{"resource": res, "task": "A watch fired: " + short})
+			answer = fmt.Sprintf("A watch fired on %s: %s No responder in the table fits, so I started a general investigation. %s", res, short, out)
 		} else {
-			answer = "A workflow fired but I could not tell which cell it was about: " + short
+			answer = "A watch fired but I could not tell which cell it was about: " + short
 		}
 	case s.pending.kind == "runbook" && req.Call != nil && !strings.Contains(q, "cancel") && !strings.Contains(q, "never mind"):
 		cell := s.pending.cell
@@ -150,6 +176,46 @@ func (s *Scripted) Chat(ctx context.Context, req ChatRequest, onDelta func(strin
 		answer = "Tell me in one message: what runs on " + resourceIn(q) + ", what is safe for me to do, what I must never do, and who to page. I write the runbook from that and show it under Runbooks before it is used."
 	case !how && strings.Contains(q, "runbook"):
 		answer = "Name the cell the runbook is for, for example \"add a runbook for edge-01\"."
+	case !how && metricIn(q) != "" && (strings.Contains(q, "alert") || strings.Contains(q, "watch") || strings.Contains(q, "monitor") || strings.Contains(q, "standing order")):
+		metric, responder := metricIn(q), metricResponder(metricIn(q))
+		threshold := 90.0
+		if m := pctRe.FindStringSubmatch(q); m != nil {
+			fmt.Sscanf(m[1], "%f", &threshold)
+		}
+		sel := ""
+		switch {
+		case strings.Contains(q, "production") || strings.Contains(q, " prod"):
+			sel = "env=production"
+		case strings.Contains(q, "staging"):
+			sel = "env=staging"
+		}
+		in := map[string]any{"name": strings.ReplaceAll(metric, "_", " ") + " on " + strings.TrimPrefix(sel, "env="), "collect": "metric", "source": metric, "op": ">", "threshold": threshold, "hold": 3, "every_seconds": everyIn(q), "trigger": "wake-warden"}
+		if sel != "" {
+			in["selector"] = sel
+		} else if res := resourceIn(q); res != "" {
+			in["cell"] = res
+			in["name"] = strings.ReplaceAll(metric, "_", " ") + " on " + res
+		} else {
+			in["selector"] = "env=production"
+			in["name"] = strings.ReplaceAll(metric, "_", " ") + " on production"
+		}
+		if responder != "" {
+			in["trigger"] = "responder:" + responder
+		}
+		preapproved := strings.Contains(q, "pre-approved") || strings.Contains(q, "preapproved") || strings.Contains(q, "already approved") || strings.Contains(q, "without asking") || strings.Contains(q, "approved action")
+		cleanup := strings.Contains(q, "clean") || strings.Contains(q, "rotate") || strings.Contains(q, "logs")
+		if preapproved && cleanup && responder == "disk-pressure-linux" {
+			in["allow"] = []any{"rotate_logs"}
+		}
+		out, err := req.Call(ctx, "create_workflow", in)
+		switch {
+		case err != nil:
+			answer = "I could not create the watch: " + err.Error()
+		case preapproved && in["allow"] == nil:
+			answer = out + " I did not pre-approve anything: only catalogue actions can be pre-approved, and none of them fits what you asked."
+		default:
+			answer = out
+		}
 	case !how && (strings.Contains(q, "watch") || strings.Contains(q, "monitor")) && resourceIn(q) != "":
 		res := resourceIn(q)
 		every := everyIn(q)
@@ -405,12 +471,12 @@ func docSummary(page, md string) string {
 // the digest. Deterministic and small on purpose.
 func responderFor(q string) string {
 	switch {
+	case strings.Contains(q, "logrotate") || strings.Contains(q, "disk") || strings.Contains(q, "no space"):
+		return "disk-pressure-linux"
 	case strings.Contains(q, "nginx") || strings.Contains(q, "out of memory") || strings.Contains(q, "killed") || strings.Contains(q, "failed with result"):
 		return "service-down"
 	case strings.Contains(q, "stopped"):
 		return "server-stopped"
-	case strings.Contains(q, "disk") || strings.Contains(q, "no space"):
-		return "disk-pressure-linux"
 	case strings.Contains(q, "error rate") || strings.Contains(q, " 502 ") || strings.Contains(q, "upstream"):
 		return "release-regression"
 	}
@@ -431,6 +497,32 @@ func responderTitle(rid, res string) string {
 	return "Workflow hit on " + res
 }
 
+var pctRe = regexp.MustCompile(`(\d{1,3})\s*%`)
+
+func metricIn(q string) string {
+	switch {
+	case strings.Contains(q, "disk"):
+		return "disk_used_percent"
+	case strings.Contains(q, "memory"):
+		return "memory_percent"
+	case strings.Contains(q, "cpu"):
+		return "cpu_percent"
+	case strings.Contains(q, "error rate"):
+		return "error_rate_percent"
+	}
+	return ""
+}
+
+func metricResponder(metric string) string {
+	switch metric {
+	case "disk_used_percent":
+		return "disk-pressure-linux"
+	case "error_rate_percent":
+		return "release-regression"
+	}
+	return ""
+}
+
 func everyIn(q string) int {
 	for _, p := range []struct {
 		words string
@@ -440,7 +532,7 @@ func everyIn(q string) int {
 			return p.secs
 		}
 	}
-	return 60
+	return 10 // demo pace, the same as the seeded watches; say "every minute" for a production cadence
 }
 
 func templateIn(q string) string {

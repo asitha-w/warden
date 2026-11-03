@@ -123,12 +123,13 @@ function workflowsBand() {
   const rows = (s.workflows || []).map((wf) => el('div', { class: 'band-row' + (wf.fired ? ' hot' : '') }, [
     el('div', { class: 'band-main' }, [
       el('div', { class: 'bc-row' }, [el('b', { text: wf.name }), el('span', { class: 'bc-pill ' + (wf.enabled ? 'bc-pill-available' : 'bc-pill-none'), text: wf.enabled ? 'every ' + wf.every + 's' : 'paused' }), wf.fired ? el('span', { class: 'bc-pill bc-pill-missing', text: 'fired ' + wf.fired }) : null]),
-      el('div', { class: 'sm muted', text: `${wf.collect} of ${wf.source} on ${Object.keys(wf.selector || {}).map((k) => k + '=' + wf.selector[k]).join(', ')} · ${wf.condition} · ${wf.trigger === 'wake-warden' ? 'wakes Warden' : 'starts ' + wf.trigger.replace('responder:', '')}` }),
+      el('div', { class: 'sm muted', text: `${wf.collect} on ${Object.keys(wf.selector || {}).map((k) => k + '=' + wf.selector[k]).join(', ')} · ${wf.condition} · ${wf.trigger === 'wake-warden' ? 'wakes Warden' : 'starts ' + wf.trigger.replace('responder:', '')}` }),
+      wf.allow && wf.allow.length ? el('div', { class: 'sm', style: 'color:var(--brand)', text: 'Standing order: ' + wf.allow.join(', ') + ' runs without asking' }) : null,
       wf.lastResult ? el('div', { class: 'sm muted mono', text: 'last: ' + wf.lastResult }) : null,
     ]),
     el('div', { class: 'bc-row' }, [Button({ label: wf.enabled ? 'Pause' : 'Resume', onClick: () => api.workflow(wf.id, { enabled: !wf.enabled }).catch((e) => toast(e.message)) }), wf.createdBy !== 'default' ? Button({ label: 'Remove', onClick: () => api.deleteWorkflow(wf.id).catch((e) => toast(e.message)) }) : null]),
   ]));
-  return band('Workflows', false, rows, 'Monitoring loops that run in the runtime and cost no tokens. A model runs only when one fires. Say "watch the logs on edge-01 every 10 seconds and wake me on errors".');
+  return band('Watches', false, rows, 'Loops that run in the runtime and cost no tokens; a model runs only when one fires. A watch with a pre-approved action is a standing order. Say "watch the logs on edge-01 and wake me on errors" or "add disk alerts for production and rotate the logs, pre-approved".');
 }
 
 function agentsBand() {

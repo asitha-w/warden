@@ -74,6 +74,8 @@ type Toolbox struct {
 	calls     int
 	maxCalls  int
 	Chain     []map[string]string // optional chain the scripted reasoner supplies
+	Allowed   []string            // actions a standing order pre-approved for this run
+	AllowedBy string              // the watch that holds the standing order
 }
 
 // NewToolbox binds a toolbox to a run.
@@ -102,8 +104,8 @@ func InvestigatorTools() []ToolDef {
 			Schema: map[string]any{"kind": map[string]any{"type": "string", "enum": []string{"metric", "log", "activity", "config", "resource"}}, "claim": map[string]any{"type": "string"}, "pointer": map[string]any{"type": "string", "description": "Where the claim comes from, for example 'disk_used_percent · web-01' or '/var/log/syslog · edge-01'"}}, Required: []string{"kind", "claim", "pointer"}},
 		{Name: "record_hypothesis", Description: "Record a candidate cause and whether the evidence supports or rejects it. Record at least one rejected alternative.",
 			Schema: map[string]any{"title": map[string]any{"type": "string"}, "detail": map[string]any{"type": "string"}, "verdict": map[string]any{"type": "string", "enum": []string{"supported", "rejected"}}}, Required: []string{"title", "detail", "verdict"}},
-		{Name: "propose_action", Description: "Propose exactly one remediation. Policy decides whether it runs now, waits for a human, or is refused. The result tells you what happened. Actions: run_command (resource, command), restart_service (resource, service), rollout_undo (resource, service), start_server (resource), notify (resource).",
-			Schema: map[string]any{"action": map[string]any{"type": "string", "enum": []string{"run_command", "restart_service", "rollout_undo", "start_server", "notify"}}, "resource": res, "command": map[string]any{"type": "string"}, "service": map[string]any{"type": "string"}, "summary": map[string]any{"type": "string", "description": "One line a human can approve"}, "blast_radius": map[string]any{"type": "string", "description": "What changes, what could go wrong, and what does not change"}}, Required: []string{"action", "resource", "summary", "blast_radius"}},
+		{Name: "propose_action", Description: "Propose exactly one remediation. Policy decides whether it runs now, waits for a human, or is refused. The result tells you what happened. Actions: rotate_logs (resource), run_command (resource, command), restart_service (resource, service), rollout_undo (resource, service), start_server (resource), notify (resource). Prefer a catalogue action over run_command.",
+			Schema: map[string]any{"action": map[string]any{"type": "string", "enum": []string{"rotate_logs", "run_command", "restart_service", "rollout_undo", "start_server", "notify"}}, "resource": res, "command": map[string]any{"type": "string"}, "service": map[string]any{"type": "string"}, "summary": map[string]any{"type": "string", "description": "One line a human can approve"}, "blast_radius": map[string]any{"type": "string", "description": "What changes, what could go wrong, and what does not change"}}, Required: []string{"action", "resource", "summary", "blast_radius"}},
 		{Name: "conclude", Description: "Finish the investigation with a two-sentence summary. Call this last, after the action result.",
 			Schema: map[string]any{"summary": map[string]any{"type": "string"}, "cause_verified": map[string]any{"type": "boolean", "description": "true only if every material claim has an evidence row"}}, Required: []string{"summary", "cause_verified"}},
 	}
@@ -126,7 +128,21 @@ func (t *Toolbox) Policy(action string) string {
 	if p == domain.PolicyAsk && t.responder.Mode == "Autonomous" {
 		return domain.PolicyAllow
 	}
+	if p == domain.PolicyAsk && t.preApproved(action) {
+		return domain.PolicyAllow
+	}
 	return p
+}
+
+// preApproved reports whether a standing order allows the action for this
+// run. A standing order can only lift ask to allow; deny stays deny.
+func (t *Toolbox) preApproved(action string) bool {
+	for _, a := range t.Allowed {
+		if a == action {
+			return true
+		}
+	}
+	return false
 }
 
 // Calls is how many tool calls the run has made.
@@ -326,15 +342,21 @@ func (t *Toolbox) propose(ctx context.Context, in map[string]any) (string, error
 		})
 		return t.remediate(action, args, cmd, "approved by "+d.by)
 	default:
+		why := "allowlisted, " + level
 		t.st.Update(func(s *domain.State) []store.Event {
 			r := s.Run(t.runID)
 			if r == nil {
 				return nil
 			}
+			if t.preApproved(action) && (t.responder == nil || t.responder.Mode != "Autonomous") {
+				why = "standing order " + t.AllowedBy
+				t.appendMsg(r, domain.RolePolicy, "policy", "standing order · "+t.AllowedBy, fmt.Sprintf("%s was pre-approved by the operator in watch %s for exactly this case. Preconditions re-checked by the remediator. Executing now and reporting.", action, t.AllowedBy))
+				return []store.Event{store.RunEvent(r), store.Activity(s, "policy", fmt.Sprintf("%s pre-approved by standing order %s. Executing without asking.", action, t.AllowedBy), t.runID, false)}
+			}
 			t.appendMsg(r, domain.RolePolicy, "policy", "autonomous · "+level, fmt.Sprintf("%s is allowlisted for %s in autonomous mode. Preconditions passed. Executing now and reporting.", action, t.responderID()))
 			return []store.Event{store.RunEvent(r), store.Activity(s, "policy", fmt.Sprintf("%s allowlisted on %s (%s). Executing without approval.", action, t.responderID(), level), t.runID, false)}
 		})
-		return t.remediate(action, args, cmd, "allowlisted, "+level)
+		return t.remediate(action, args, cmd, why)
 	}
 }
 
@@ -358,7 +380,7 @@ func (t *Toolbox) remediate(action string, args map[string]any, cmd, why string)
 			return
 		}
 		conn = c.Name
-		inGuest := action == "run_command" || action == "restart_service"
+		inGuest := action == "run_command" || action == "restart_service" || action == "rotate_logs"
 		inCluster := action == "rollout_undo" || action == "delete_pod"
 		switch {
 		case inGuest && !res.HasHands():
@@ -450,6 +472,8 @@ func firstLine(s string) string {
 func describe(action string, args map[string]any) string {
 	res := str(args, "resource")
 	switch action {
+	case "rotate_logs":
+		return "ansible " + res + " -m logrotate: logrotate --force /etc/logrotate.d/nginx && NGINX_DEBUG=0 && nginx -s reload"
 	case "run_command":
 		return "az vm run-command invoke --name " + res + " --command-id RunShellScript --scripts '" + str(args, "command") + "'"
 	case "restart_service":

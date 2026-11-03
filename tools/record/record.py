@@ -108,7 +108,7 @@ class Demo:
         self.pause(s)
 
 
-def wait_for_warden(d: Demo, text, timeout=25):
+def wait_for_warden(d: Demo, text, timeout=40):
     # wait until the orchestrator's latest message contains the text, then read it
     loc = d.page.locator("#home-thread .orchtext").last
     deadline = time.time() + timeout
@@ -123,139 +123,110 @@ def wait_for_warden(d: Demo, text, timeout=25):
 
 
 def ask(d: Demo, text, wait=None, pause=3):
-    d.type(d.page.locator("#home-input"), text)
+    d.type(d.page.locator("#home-input"), text, delay=28)
     d.page.keyboard.press("Enter")
     if wait:
         wait_for_warden(d, wait)
     d.pause(pause)
 
 
-def approve_when_asked(d: Demo, wait_text):
-    wait_for_warden(d, "Approval")
-    d.click(d.page.locator(".band-approval").get_by_role("button", name="Approve"), pause=1)
-    wait_for_warden(d, wait_text)
+def wait_panel_approval(d: Demo, timeout=40):
+    deadline = time.time() + timeout
+    while time.time() < deadline and d.page.locator(".band-approval").count() == 0:
+        time.sleep(0.5)
+
+
+def wait_resolved(d: Demo, timeout=90):
+    import json, urllib.request
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        st = json.loads(urllib.request.urlopen(f"{BASE}/api/state", timeout=2).read())
+        if any(f["status"] == "resolved" for f in st["findings"]):
+            return
+        time.sleep(1)
 
 
 def part1(d: Demo):
-    d.title("Three steps", "Part 1 of 4 · sign in, create the tenant, add a credential; Warden takes over")
+    d.title("Three steps", "Part 1 of 4 · sign in, create the tenant, name your provider; Warden takes it from there")
     d.go("login")
     d.type(d.page.get_by_placeholder("you@company.example"), "asitha@shop.example")
     d.type(d.page.get_by_placeholder("Password"), "demo-password", delay=30)
     d.click(d.button("Sign in"), pause=2)
     d.hover_read(d.page.get_by_text("The tenant gets its own runtime"), 2)
     d.click(d.button("Create tenant"), pause=1)
-    # Warden speaks first
-    wait_for_warden(d, "I am Warden")
-    d.hover_read(d.page.locator(".panel-next"), 2.5)
-    # the credential is the only form: Azure first
-    d.click(d.button("Add Azure credential"), pause=1.5)
-    d.hover_read(d.page.get_by_text("Consent creates a service principal"), 2.2)
+    wait_for_warden(d, "Which provider")
+    ask(d, "upcloud", wait="opened the token form", pause=1)
+    d.hover_read(d.page.get_by_text("Stored in the tenant secret store"), 2.5)
     d.click(d.button("Test and save connection"), pause=1)
     wait_for_warden(d, "Your connection is validated")
     d.hover_read(d.page.locator(".band.hot").first, 2)
     ask(d, "onboard everything", wait="Next: grant")
     d.hover_read(d.page.locator(".band").filter(has_text="Cells"), 2)
-    # a VM: Warden issues the grant and hands over the line
-    ask(d, "grant web-01", wait="Grant issued")
+    ask(d, "grant edge-01", wait="Grant issued")
     d.hover_read(d.page.locator("#home-thread .codewrap").last, 3)
     wait_for_warden(d, "reported back")
-    # a cluster: changes the customer's side, so Warden asks first
+    # the cluster: each change to the customer's side asks first, in the panel
     d.click(d.button("Ask Warden for API access"), pause=1)
-    approve_when_asked(d, "has API access")
+    wait_panel_approval(d)
+    d.hover_read(d.page.locator(".band-approval").first, 2.5)
+    d.click(d.page.locator(".band-approval").get_by_role("button", name="Approve"), pause=1)
+    wait_for_warden(d, "has API access")
     d.click(d.button("Ask Warden to install the probe"), pause=1)
-    approve_when_asked(d, "Level 2")
-    # UpCloud: the second provider, the same three steps
-    d.click(d.button("Add UpCloud token"), pause=1.5)
-    d.hover_read(d.page.get_by_text("Restrict the sub-account to the servers"), 2)
-    d.click(d.button("Test and save connection"), pause=1)
-    wait_for_warden(d, "Your connection is validated")
-    d.click(d.button("Ask Warden to onboard"), pause=1)
-    wait_for_warden(d, "Onboarded")
-    ask(d, "grant edge-01", wait="Grant issued", pause=1)
-    wait_for_warden(d, "reported back")
-    d.click(d.button("Ask Warden for API access"), pause=1)
-    approve_when_asked(d, "has API access")
-    d.click(d.button("Ask Warden to install the probe"), pause=1)
-    approve_when_asked(d, "nothing left")
-    d.hover_read(d.page.locator(".panel-head"), 3)
-    # what the agents are
-    d.go("agents", 2.5)
-    d.hover_read(d.page.get_by_text("Orchestrator", exact=True).first, 2)
-    d.hover_read(d.page.get_by_text("Investigator", exact=True).first, 2)
+    wait_panel_approval(d)
+    d.click(d.page.locator(".band-approval").get_by_role("button", name="Approve"), pause=1)
+    wait_for_warden(d, "nothing left")
+    d.hover_read(d.page.locator(".panel-head"), 2.5)
 
 
 def part2(d: Demo):
-    d.title("Runbooks", "Part 2 of 4 · tenant guidance the agents follow")
-    d.go("runbooks", 2.5)
-    d.hover_read(d.page.get_by_text("Shop web on VMs").first, 2)
-    d.scroll(300, 2)
-    d.scroll(-300, 1)
-    d.click(d.button("New runbook"), pause=1.5)
-    d.type(d.page.locator("#rb-name"), "Shop data on managed PostgreSQL")
-    d.type(d.page.locator("#rb-sel"), "app=shop, tier=data")
-    d.click(d.page.locator("#rb-body"), pause=0.3)
-    d.page.keyboard.press("Control+A")
-    body = (
-        "# Shop data on managed PostgreSQL\n\n"
-        "UpCloud managed PostgreSQL 16 behind the shop API. Nightly backup 01:00 to 02:00 CET.\n\n"
-        "## Health signals\n- cpu_percent above 80 during the backup window is normal; outside it, investigate.\n"
-        "- connections above 80 means the API is leaking connections.\n\n"
-        "## Known fixes, in order\n1. High connections: ask the API owner to restart shop-api. Never kill sessions on the database.\n"
-        "2. Slow queries: capture pg_stat_statements and hand it to data@shop.example.\n\n"
-        "## Never\n- Never resize or restart the managed database from Warden.\n\n"
-        "## Escalation\ndata@shop.example. Page for Critical only.\n"
-    )
-    d.page.keyboard.type(body, delay=12)
-    d.pause(1)
-    d.click(d.button("Create runbook"), pause=2)
-    d.scroll(900, 2)
-    d.hover_read(d.page.get_by_text("No cell matches this selector yet"), 2.5)
+    d.title("Teach Warden", "Part 2 of 4 · a runbook from your words, a watch, and a standing order")
+    ask(d, "add a runbook for edge-01", wait="Tell me in one message", pause=1)
+    ask(d, "edge-01 runs nginx as a caching proxy in front of the shop. Restarting nginx is safe at any hour. Rotating the logs is safe. Never delete the cache under /var/cache/nginx. Page ops@shop.example for critical only.", wait="saved")
+    d.hover_read(d.page.locator(".band").filter(has_text="Runbooks"), 2.5)
+    d.go("runbooks", 2)
+    d.hover_read(d.page.get_by_text("Applies when").first, 3)
+    d.scroll(400, 2)
+    d.go("warden", 2)
+    ask(d, "watch the logs on edge-01 every 10 seconds and wake me on errors", wait="Created watch")
+    ask(d, "add disk space alerts for production, and if disk is low clean up the logs, already approved", wait="Created watch")
+    d.hover_read(d.page.locator(".band").filter(has_text="Watches"), 3)
+    d.hover_read(d.page.get_by_text("Standing order: rotate_logs").first, 3)
 
 
 def part3(d: Demo):
-    d.title("An incident, end to end", "Part 3 of 4 · signal, investigation, approval, verification")
+    d.title("It happens", "Part 3 of 4 · a log fires a watch, Warden reacts; a standing order fixes the disk without asking")
+    d.click(d.button("Crash nginx on edge-01"), pause=1)
+    wait_for_warden(d, "fired on edge-01")
+    d.hover_read(d.page.locator(".band").filter(has_text="Watches"), 2)
+    wait_panel_approval(d)
+    d.hover_read(d.page.locator(".band-approval").first, 3.5)
+    d.click(d.page.locator(".band-approval").get_by_role("button", name="Approve fix"), pause=2)
+    wait_resolved(d, 60)
     d.go("findings", 2.5)
-    d.click(d.button("Ship a bad version of shop-api"), pause=1)
-    d.hover_read(d.page.get_by_text("Error rate, aks-shop"), 6)
-    d.pause(5)
-    d.click(d.page.locator("tr.row").first, pause=3)
-    d.hover_read(d.page.get_by_text("Runbooks handed to the investigator"), 3)
-    d.pause(4)
-    d.scroll(500, 3)
-    d.scroll(500, 3)
-    d.scroll(600, 3)
-    d.hover_read(d.page.get_by_text("Blast radius").first, 3)
-    d.click(d.button("Approve fix"), pause=3)
-    d.scroll(500, 4)
-    d.scroll(500, 4)
-    d.pause(5)
-    d.scroll(400, 3)
-    d.go("findings", 3)
     d.hover_read(d.page.locator("tr.row").first, 3)
+    d.go("warden", 2)
+    d.click(d.button("Fill the disk on edge-01"), pause=1)
+    wait_for_warden(d, "pre-approves rotate_logs", timeout=90)
+    d.hover_read(d.page.locator("#home-thread .orchtext").last, 3)
+    wait_resolved(d, 90)
+    d.pause(2)
+    d.go("investigations", 2.5)
+    d.click(d.page.locator("tr.row").first, pause=3)
+    d.hover_read(d.page.get_by_text("standing order", exact=False).first, 3.5)
+    d.scroll(700, 3)
+    d.scroll(700, 3)
 
 
 def part4(d: Demo):
-    d.title("Working with the agents", "Part 4 of 4 · the operator and the orchestrator resolve an outage")
+    d.title("A specialist", "Part 4 of 4 · Warden adds an agent from a template; the responder starts it from now on")
     d.go("warden", 2)
-    d.click(d.button("Crash nginx on edge-01"), pause=1)
-    d.go("warden", 2)
-    d.pause(5)
-    ask(d, "customers say the edge is down, what is open?", pause=4)
-    ask(d, "why is edge-01 failing?", pause=6)
-    d.go("findings", 2.5)
-    d.click(d.page.locator("tr.row").first, pause=3)
-    d.scroll(900, 3)
-    d.scroll(900, 2)
-    d.type(d.page.locator("#ask-input"), "is restarting nginx safe right now, any downtime?")
-    d.page.keyboard.press("Enter")
-    d.pause(5)
-    d.click(d.button("Approve fix"), pause=3)
-    d.scroll(600, 4)
-    d.pause(6)
-    d.scroll(600, 3)
+    ask(d, "add an nginx specialist for the edge servers", wait="Added")
+    d.hover_read(d.page.locator(".band").filter(has_text="Agents"), 3)
+    d.go("agents", 2.5)
+    d.hover_read(d.page.get_by_text("nginx specialist", exact=True).first, 3)
     d.go("consumption", 3)
     d.hover_read(d.page.get_by_text("By agent"), 3)
-    d.title("Warden", "agentic reliability operations · prototype, scripted mode", hold=3)
+    d.title("Warden", "the agent that tends the estate · prototype, scripted mode, no model", hold=3)
 
 
 def main():

@@ -97,9 +97,9 @@ func New() *World {
 	w.Hosts["edge-01"] = &Host{ID: "edge-01", Provider: "upcloud", Kind: "server", State: "started", Health: "n/a",
 		Metrics:  map[string]float64{"cpu_percent": 18, "memory_percent": 61, "disk_used_percent": 44, "requests_per_second": 140, "error_rate_percent": 0.1, "http_up": 1},
 		Services: map[string]*Service{"nginx": {Name: "nginx", Version: "1.26.2", State: "running"}},
-		Logs:     map[string][]string{"/var/log/syslog": {}, "/var/log/nginx/error.log": {}},
-		Files:    map[string]string{},
-		Activity: []ActivityEntry{}}
+		Logs:     map[string][]string{"/var/log/syslog": {}, "/var/log/nginx/error.log": {}, "/var/log/nginx/access.log": {}},
+		Files:    map[string]string{"/var/lib/logrotate/status": "logrotate state -- version 2\n\"/var/log/nginx/access.log\" 2026-10-30-01:00:00\n", "/etc/nginx/env": "NGINX_DEBUG=0\n", "/etc/nginx/conf.d/cache.conf": "proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=edge_cache:64m max_size=1g;\n"},
+		Activity: []ActivityEntry{{At: time.Now().Add(-30 * time.Hour), Actor: "ci-deploy", Text: "Deploy: nginx 1.26.2, cache config reloaded"}}}
 	w.Hosts["db-01"] = &Host{ID: "db-01", Provider: "upcloud", Kind: "managed-db", State: "started", Health: "n/a",
 		Metrics:  map[string]float64{"cpu_percent": 31, "memory_percent": 70, "disk_used_percent": 52, "connections": 42},
 		Services: map[string]*Service{"postgresql": {Name: "postgresql", Version: "16.4", State: "running"}},
@@ -439,6 +439,12 @@ func (w *World) Execute(a Action) (string, error) {
 			h.Activity = append(h.Activity, ActivityEntry{At: time.Now(), Actor: "warden-remediator", Text: "POST /1.3/server/" + host + "/start"})
 			out = fmt.Sprintf("POST /1.3/server/%s/start: 200 OK, state maintenance -> started", host)
 		}
+	case "rotate_logs":
+		if h.State != "started" {
+			return "", fmt.Errorf("%s is not running", host)
+		}
+		h.Activity = append(h.Activity, ActivityEntry{At: time.Now(), Actor: "warden-remediator", Text: "ansible: logrotate --force /etc/logrotate.d/nginx; NGINX_DEBUG=0; nginx -s reload"})
+		out = fmt.Sprintf("rotate_logs on %s: logrotate --force /etc/logrotate.d/nginx: ok; NGINX_DEBUG set to 0; nginx reloaded", host)
 	case "stop_server", "delete_pod":
 		return "", fmt.Errorf("%s is denied by policy", a.Name)
 	case "notify":
