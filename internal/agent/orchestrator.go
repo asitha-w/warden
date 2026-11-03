@@ -336,6 +336,24 @@ You also run setup, so the operator never configures Warden by hand. The flow is
 
 // Chat handles one operator message to the orchestrator.
 func (o *Orchestrator) Chat(ctx context.Context, question, by string) error {
+	return o.turn(ctx, question, by, true)
+}
+
+// Announce makes the orchestrator speak first: the prompt is not shown in the
+// thread, only the answer. Used when the tenant is created, when a
+// connection validates and when a cell reaches a new level, so the operator
+// is told what happened and what comes next without asking.
+func (o *Orchestrator) Announce(prompt string) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := o.turn(ctx, prompt, "warden", false); err != nil {
+			o.log.Warn("announce failed", "err", err)
+		}
+	}()
+}
+
+func (o *Orchestrator) turn(ctx context.Context, question, by string, show bool) error {
 	o.chatMu.Lock()
 	defer o.chatMu.Unlock()
 	var history []domain.ChatMessage
@@ -346,9 +364,13 @@ func (o *Orchestrator) Chat(ctx context.Context, question, by string) error {
 			history = append(history, *m)
 		}
 		ctxText = o.contextText(s)
-		um := &domain.ChatMessage{ID: o.st.NextID("c", 0), Role: "user", Text: question, At: time.Now()}
 		am := &domain.ChatMessage{ID: o.st.NextID("c", 0), Role: "orchestrator", At: time.Now()}
 		msgID = am.ID
+		if !show {
+			s.Chat = append(s.Chat, am)
+			return []store.Event{store.ChatEvent(am)}
+		}
+		um := &domain.ChatMessage{ID: o.st.NextID("c", 0), Role: "user", Text: question, At: time.Now()}
 		s.Chat = append(s.Chat, um, am)
 		return []store.Event{store.ChatEvent(um), store.ChatEvent(am)}
 	})

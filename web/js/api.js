@@ -7,6 +7,7 @@ async function send(method, path, body) {
 }
 export const api = {
   state: () => send('GET', '/api/state'),
+  setup: () => send('GET', '/api/setup'),
   login: (email, name) => send('POST', '/api/login', { email, name }),
   logout: () => send('POST', '/api/logout'),
   createTenant: (t) => send('POST', '/api/tenant', t),

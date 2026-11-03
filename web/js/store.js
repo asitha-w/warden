@@ -5,6 +5,7 @@ export const store = {
   state: null,
   metrics: { hosts: {}, series: {}, probes: 0, online: false, at: null },
   connection: 'connecting',
+  setup: null, // the server's setup overview, refreshed after setup events
 };
 function upsert(list, item, key = 'id', prepend = false) {
   const i = list.findIndex((x) => x[key] === item[key]);
@@ -69,9 +70,9 @@ export const sel = {
   // nextStep is the one setup step the console points at, or null when the estate is set up.
   nextStep: () => {
     const s = store.state; if (!s || !s.tenant) return null;
-    if (!s.connections.some((c) => c.status === 'connected')) return { nav: 'connections', tip: 'Start by creating a connection', detail: 'A connection is an identity at a scope. It discovers what Warden could manage; you choose what becomes a cell.', doc: '#docs/model' };
-    if (!s.cells.length) return { nav: 'connections', tip: 'Onboard what your connection discovered', detail: 'Each connection lists what it found. Pick what Warden should manage; each becomes a cell at Level 0.', doc: '#docs/model/levels-of-reach' };
-    if (s.cells.some((c) => c.probeCapable && c.level < (/cluster/.test(c.kind) ? 2 : 1))) return { nav: 'cells', tip: 'Raise your cells', detail: 'Each cell page has the manual steps for its next level: the grant on a VM, API access and the probe on a cluster.', doc: '#docs/model/levels-of-reach' };
+    if (!s.connections.some((c) => c.status === 'connected')) return { nav: 'warden', tip: 'Start by adding a credential', detail: 'A connection is an identity at a scope. It discovers what Warden could manage; you choose what becomes a cell.', doc: '#docs/model' };
+    if (!s.cells.length) return { nav: 'warden', tip: 'Let Warden onboard what it found', detail: 'Each connection lists what it found. Pick what Warden should manage; each becomes a cell at Level 0.', doc: '#docs/model/levels-of-reach' };
+    if (s.cells.some((c) => c.probeCapable && c.level < (/cluster/.test(c.kind) ? 2 : 1))) return { nav: 'warden', tip: 'Raise your cells with Warden', detail: 'Each cell page has the manual steps for its next level: the grant on a VM, API access and the probe on a cluster.', doc: '#docs/model/levels-of-reach' };
     return null;
   },
   cell: (id) => store.state.cells.find((c) => c.id === id),

@@ -64,6 +64,9 @@ func main() {
 	}
 	su := setup.New(st)
 	orch := agent.NewOrchestrator(st, w, gate, reasoner, su, model, log)
+	su.OnRaised = func(id, text string) {
+		orch.Announce("[announce] cell " + text + "\nCall get_setup_state and tell the operator what you can now see and do on " + id + " and the one next step.")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

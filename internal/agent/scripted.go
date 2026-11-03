@@ -3,11 +3,13 @@ package agent
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/asitha-w/warden/internal/domain"
 	"github.com/asitha-w/warden/internal/scenario"
+	"github.com/asitha-w/warden/internal/setup"
 	"github.com/asitha-w/warden/internal/store"
 )
 
@@ -97,16 +99,28 @@ func (s *Scripted) Chat(ctx context.Context, req ChatRequest, onDelta func(strin
 	answer := ""
 	how := strings.Contains(q, "how ")
 	withState := func(lead string) string {
-		out, _ := req.Call(ctx, "get_setup_state", map[string]any{})
-		return lead + "\n" + out
+		// the full state goes in the tool line; the answer is the summary
+		_, _ = req.Call(ctx, "get_setup_state", map[string]any{})
+		return strings.TrimSpace(lead + " " + s.setupSummary())
 	}
 	switch {
+	case strings.HasPrefix(q, "[announce] tenant"):
+		answer = "I am Warden, the agent that looks after this estate. Add a cloud provider credential in the panel on the right and I take it from there: I will say what I found, what I can already see, and hand you the one thing to run when I need more reach."
+	case req.Call != nil && strings.HasPrefix(q, "[announce] connection"):
+		answer = withState("Your connection is validated.")
+	case req.Call != nil && strings.HasPrefix(q, "[announce] cell"):
+		first, _, _ := strings.Cut(strings.TrimPrefix(req.Question, "[announce] cell"), "\n")
+		answer = withState(strings.TrimSpace(first))
 	case req.Call != nil && !how && strings.Contains(q, "onboard"):
-		out, err := req.Call(ctx, "onboard_cells", map[string]any{})
+		in := map[string]any{}
+		if m := connRe.FindString(q); m != "" {
+			in["connection"] = m
+		}
+		out, err := req.Call(ctx, "onboard_cells", in)
 		if err != nil || strings.HasPrefix(out, "no connection") || strings.HasPrefix(out, "nothing to onboard") || strings.HasPrefix(out, "say which") {
 			answer = out
 		} else {
-			answer = withState(out + " Here is where setup stands now.")
+			answer = withState(out)
 		}
 	case req.Call != nil && !how && strings.Contains(q, "grant") && resourceIn(q) != "":
 		out, _ := req.Call(ctx, "issue_grant", map[string]any{"cell": resourceIn(q), "tunnel": strings.Contains(q, "tunnel")})
@@ -121,7 +135,7 @@ func (s *Scripted) Chat(ctx context.Context, req ChatRequest, onDelta func(strin
 		out, _ := req.Call(ctx, "list_catalogue", map[string]any{})
 		answer = "This is what the connection found:\n" + out
 	case req.Call != nil && !how && (strings.Contains(q, "found") || strings.Contains(q, "find") || strings.Contains(q, "next") || strings.Contains(q, "set up") || strings.Contains(q, "setup") || strings.Contains(q, "what is there") || strings.Contains(q, "what's there") || strings.Contains(q, "what can you") || strings.Contains(q, "where are we")):
-		answer = withState("Here is where setup stands.")
+		answer = withState("")
 	case req.Call != nil && (strings.Contains(q, "investigate") || strings.Contains(q, "look into") || strings.Contains(q, "check")) && resourceIn(q) != "":
 		res := resourceIn(q)
 		out, _ := req.Call(ctx, "start_investigation", map[string]any{"resource": res, "task": req.Question})
@@ -146,15 +160,79 @@ func (s *Scripted) Chat(ctx context.Context, req ChatRequest, onDelta func(strin
 		answer = "I am running in scripted mode without a model. I can tell you what setup found and what is next, onboard what a connection found, issue the grant for a VM, enable API access or install the probe on a cluster, list findings, describe a resource (name it, for example web-01), or start an investigation if you ask me to check a resource."
 	}
 	if onDelta != nil {
-		for i, w := range strings.Fields(answer) {
-			if i > 0 {
-				w = " " + w
+		for li, line := range strings.Split(answer, "\n") {
+			if li > 0 {
+				onDelta("\n")
 			}
-			onDelta(w)
-			time.Sleep(12 * time.Millisecond)
+			for i, w := range strings.Fields(line) {
+				if i > 0 {
+					w = " " + w
+				}
+				onDelta(w)
+				time.Sleep(12 * time.Millisecond)
+			}
 		}
 	}
 	return answer, nil
+}
+
+var connRe = regexp.MustCompile(`conn-[0-9a-f]+`)
+
+// setupSummary is the scripted reasoner's one-paragraph reading of the setup
+// overview: what exists, and the one next step with who does it.
+func (s *Scripted) setupSummary() string {
+	var o setup.Overview
+	s.st.View(func(st *domain.State) { o = setup.Compute(st) })
+	var b strings.Builder
+	for _, c := range o.Connections {
+		if c.Status == domain.ConnValidating {
+			fmt.Fprintf(&b, "%s is still validating. ", c.Name)
+			continue
+		}
+		fmt.Fprintf(&b, "Through %s I found %d things, %d of them I can manage", c.Name, c.Found, c.Manageable)
+		switch {
+		case c.Manageable == 0:
+			b.WriteString(". ")
+		case c.Onboarded == c.Manageable:
+			b.WriteString(", all onboarded as cells. ")
+		case c.Onboarded == 0:
+			b.WriteString(", none onboarded yet. ")
+		default:
+			fmt.Fprintf(&b, ", %d onboarded so far. ", c.Onboarded)
+		}
+	}
+	var levels []string
+	for _, c := range o.Cells {
+		what := "I see it from the provider only"
+		switch {
+		case c.Level >= c.MaxLevel:
+			what = "I have full reach"
+		case c.Level >= 1:
+			what = "I can see inside and act"
+		}
+		levels = append(levels, fmt.Sprintf("%s is at %s, %s", c.ID, c.LevelName, what))
+	}
+	if len(levels) > 0 {
+		b.WriteString(strings.Join(levels, "; ") + ". ")
+	}
+	if len(o.Next) == 0 {
+		b.WriteString("Everything is at its highest level; there is nothing left to set up.")
+		return b.String()
+	}
+	n := o.Next[0]
+	switch n.Who {
+	case setup.WhoOperator:
+		fmt.Fprintf(&b, "Next, yours to do: %s.", strings.ToLower(n.Title[:1])+n.Title[1:])
+	case setup.WhoBoth:
+		fmt.Fprintf(&b, "Next: %s. Say \"grant %s\" and I issue the token and give you the line to run.", strings.ToLower(n.Title[:1])+n.Title[1:], n.Target)
+	default:
+		if n.Tool == "" {
+			fmt.Fprintf(&b, "Now: %s.", strings.ToLower(n.Title[:1])+n.Title[1:])
+		} else {
+			fmt.Fprintf(&b, "Next: %s. Say so, or press the button in the panel, and I do it.", strings.ToLower(n.Title[:1])+n.Title[1:])
+		}
+	}
+	return b.String()
 }
 
 func resourceIn(q string) string {

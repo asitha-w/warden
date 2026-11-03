@@ -21,6 +21,15 @@ type Service struct {
 	st *store.Store
 	// Delay scales the simulated round trips; tests set it to zero.
 	Delay time.Duration
+	// OnRaised is called after a cell reports back at a new level, with a
+	// sentence the orchestrator can announce. Optional.
+	OnRaised func(cellID, text string)
+}
+
+func (s *Service) raised(id, text string) {
+	if s.OnRaised != nil {
+		s.OnRaised(id, text)
+	}
 }
 
 // New returns a service on the store.
@@ -156,6 +165,7 @@ func (s *Service) Grant(id string, tunnel bool, by string) (*domain.Grant, error
 			SyncProbe(st)
 			return []store.Event{{Type: "cells", Data: st.Cells}, {Type: "probe", Data: st.Probe}, store.Activity(st, "signal", fmt.Sprintf("Grant on %s reported back: host key pinned, instance identity matches the provider, probe dialled in over OpAMP. %s. Hands: %s.", id, c.LevelName(), map[string]string{domain.HandsSSH: "SSH from the egress address, Ansible catalogue", domain.HandsTunnel: "SSH through the reverse tunnel, Ansible catalogue"}[c.Hands]), "", false), store.Toast(id + " is at Level 1")}
 		})
+		s.raised(id, "The grant on "+id+" reported back: it is at Level 1 with the probe online and hands over SSH.")
 	})
 	return g, nil
 }
@@ -208,6 +218,7 @@ func (s *Service) APIAccess(id, by string) error {
 			}
 			return []store.Event{{Type: "cells", Data: st.Cells}, {Type: "probe", Data: st.Probe}, store.Activity(st, "signal", text, "", false), store.Toast(id + " is at Level 1")}
 		})
+		s.raised(id, id+" has API access: it is at Level 1 with hands through the Kubernetes API. The probe would add node metrics and container logs with history.")
 	})
 	return nil
 }
@@ -250,6 +261,7 @@ func (s *Service) Probe(id, by string) error {
 			SyncProbe(st)
 			return []store.Event{{Type: "cells", Data: st.Cells}, {Type: "probe", Data: st.Probe}, store.Activity(st, "signal", fmt.Sprintf("Probe on %s dialled in over OpAMP from every node. %s.", id, c.LevelName()), "", false), store.Toast(id + " is at Level 2")}
 		})
+		s.raised(id, "The probe on "+id+" dialled in from every node: it is at Level 2, its highest.")
 	})
 	return nil
 }

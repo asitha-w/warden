@@ -15,8 +15,11 @@ import { pageRunbooks } from './pages/runbooks.js';
 import { pageCells, pageCell } from './pages/cells.js';
 import { pageApprovals, pageConnections, pageResponders, pageConsumption } from './pages/admin.js';
 import { pageDocs } from './pages/docs.js';
+import { pageHome } from './pages/home.js';
+import { api } from './api.js';
 
 const PAGES = {
+  warden: { page: pageHome, crumb: 'Warden' },
   findings: { page: pageFindings, crumb: 'Findings', aside: true },
   investigations: { page: pageInvestigations, crumb: 'Investigations' },
   approvals: { page: pageApprovals, crumb: 'Approvals', aside: true },
@@ -43,12 +46,17 @@ function render() {
     if (parts[0] === 'docs') { const d = pageDocs(parts[1] || 'model', parts[2]); out = store.state.tenant ? shell(d, { crumb: 'Documentation' }) : setupShell(d); }
     else if (parts[0] === 'inv') out = shell(pageInv(parts[1]), { crumb: 'Investigations / ' + parts[1], aside: true });
     else if (parts[0] === 'cell') out = shell(pageCell(parts[1]), { crumb: 'Cells / ' + parts[1] });
-    else { const p = PAGES[parts[0]] || PAGES.findings; out = shell(p.page(), { crumb: p.crumb, aside: !!p.aside }); }
+    else { const p = PAGES[parts[0]] || PAGES.warden; out = shell(p.page(), { crumb: p.crumb, aside: !!p.aside }); }
   }
   app.replaceWith(out); out.id = 'app';
   const ns = out.querySelector('.content'); if (ns) ns.scrollTop = sc;
   if (activeId) { const again = document.getElementById(activeId); if (again) { if (activeVal !== null && 'value' in again && again.value === '') again.value = activeVal; again.focus(); } }
   drawTiles(); demobar();
+}
+let setupTimer = null;
+function refreshSetup() {
+  if (setupTimer) return;
+  setupTimer = setTimeout(() => { setupTimer = null; api.setup().then((o) => { store.setup = o; scheduleRender(); }).catch(() => {}); }, 80);
 }
 function scheduleRender() {
   if (renderQueued) return; renderQueued = true;
@@ -65,8 +73,9 @@ function onEvent(ev) {
     const s = store.state; const h = location.hash.replace(/^#/, '');
     if (!s.user && h !== 'login') location.hash = '#login';
     else if (s.user && !s.tenant && h.indexOf('setup') !== 0) location.hash = '#setup-tenant';
-    else if (s.user && s.tenant && (h === 'login' || h === 'setup-tenant')) location.hash = '#findings';
+    else if (s.user && s.tenant && (h === 'login' || h === 'setup-tenant')) location.hash = '#warden';
   }
+  if (['snapshot', 'tenant', 'connection', 'connections', 'cells', 'probe', 'approval'].includes(ev.type)) refreshSetup();
 }
 try { const t = localStorage.getItem('warden-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
 window.addEventListener('hashchange', render);

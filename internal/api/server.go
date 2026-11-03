@@ -180,6 +180,7 @@ func (s *Server) tenant(w http.ResponseWriter, r *http.Request) {
 		st.Tenant = t
 		return []store.Event{{Type: "tenant", Data: t}, store.Activity(st, "run", fmt.Sprintf("Tenant %s created. Runtime %s provisioned with static egress %s.", t.Name, t.Runtime, t.EgressIP), "", false)}
 	})
+	s.orch.Announce("[announce] tenant: the operator just created the tenant. Introduce yourself in two sentences and say the one next step: add a cloud provider credential in the panel. Do not list tools.")
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -302,6 +303,7 @@ func (s *Server) createConnection(w http.ResponseWriter, r *http.Request) {
 			text = fmt.Sprintf("%s connected. Discovery found %d things in scope, %d of them manageable.", c.Name, len(c.Catalogue), n)
 			return []store.Event{{Type: "connection", Data: c}, store.Activity(st, "run", text, "", false)}
 		})
+		s.orch.Announce("[announce] connection: a connection just validated. Call get_setup_state, say what it found and which of it you can manage, and say you will onboard it unless the operator wants to choose.")
 	}()
 	writeJSON(w, 202, map[string]any{"ok": true, "id": id})
 }

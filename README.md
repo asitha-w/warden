@@ -11,6 +11,7 @@ Warden started on 2026-11-03 from the Beacon codebase (the Go service, the agent
 | `cmd/warden` | The binary: API, event stream, embedded console, signal loop, orchestrator. |
 | `internal/domain` | Entities the console shows and the agents act on. No dependencies. |
 | `internal/store` | In-memory system of record for one tenant plus the event bus. |
+| `web/js/pages/home.js` | The home page: the orchestrator's thread beside the setup panel (tenant, connections, cells) rendered from `GET /api/setup`. |
 | `internal/setup` | Raises a tenant from a credential to a managed estate: onboarding, the grant, API access, the probe, and the setup overview (`GET /api/setup`). The API handlers and the orchestrator's setup tools both call it. |
 | `internal/world` | Simulated estate: hosts, metric streams, services with versions, logs, files, activity. |
 | `internal/scenario` | The faults the demo injects and the scripted playbook for each. |

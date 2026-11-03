@@ -6,7 +6,7 @@ import { api } from './api.js';
 import { icon } from './icons.js';
 
 export const NAV = [
-  ['findings', 'Findings', 'activity'], ['investigations', 'Investigations', 'search'], ['approvals', 'Approvals', 'shield'], ['chat', 'Ask Warden', 'message'],
+  ['warden', 'Warden', 'warden'], ['findings', 'Findings', 'activity'], ['investigations', 'Investigations', 'search'], ['approvals', 'Approvals', 'shield'],
   ['sep', 'Configure'],
   ['cells', 'Cells', 'server'], ['connections', 'Connections', 'plug'], ['runbooks', 'Runbooks', 'book'], ['agents', 'Agents', 'bot'], ['responders', 'Responders', 'zap'], ['consumption', 'Consumption', 'gauge'],
   ['sep', 'Help'],
